@@ -167,7 +167,9 @@ console.log("configured");
     const text = encodeURIComponent("check this https://example.com/post");
     const html = await (await fetch(`${base}/share?text=${text}`, { headers: { cookie } })).text();
     assert.match(html, /Tap a category/);
-    assert.match(html, /example\.com\/post/);
+    // The link is pulled out of the shared text and shown as-is, in its own line.
+    const shown = /<p class="mt-1 truncate[^"]*">([^<]*)<\/p>/.exec(html)?.[1];
+    assert.equal(shown, "https://example.com/post");
     assert.match(await (await fetch(`${base}/share?text=words`, { headers: { cookie } })).text(), /No link/);
   });
 
