@@ -38,7 +38,7 @@ Nothing touches GitHub.
 pnpm verify    # format check, lint, types, unit tests, build, smoke test
 ```
 
-CI runs the same commands on Node 22 and 24, plus CodeQL and a dependency review.
+CI runs the same commands on Node 22 (≥ 22.23.4) and 24, plus CodeQL and a dependency review.
 All of them must pass, and every PR needs a maintainer's approving review before it
 can merge.
 
