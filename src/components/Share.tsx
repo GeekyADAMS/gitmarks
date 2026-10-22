@@ -17,10 +17,13 @@ export default function Share({
   url,
   title,
   categories,
+  popup = false,
 }: {
   url: string;
   title: string;
   categories: string[];
+  /** Opened by the bookmarklet: close the window once saved. */
+  popup?: boolean;
 }) {
   const [state, setState] = useState<{ saving?: string; saved?: string; error?: string }>({});
 
@@ -34,7 +37,11 @@ export default function Share({
     const data = res && res.ok ? await res.json() : null;
     if (!data?.ok) return setState({ error: data?.error ?? "Could not save. Try again." });
     setState({ saved: category || "Inbox" });
-    setTimeout(() => (history.length > 1 ? history.back() : location.replace("/")), 900);
+    setTimeout(() => {
+      if (popup) return window.close();
+      if (history.length > 1) history.back();
+      else location.replace("/");
+    }, 900);
   }
 
   if (state.saved) {

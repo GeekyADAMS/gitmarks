@@ -1,7 +1,7 @@
 {
   "name": "gitmarks",
   "version": "1.0.0",
-  "description": "Private, categorised bookmarks stored in your own GitHub repo. Save from the web, a browser extension, the X timeline, and the iPhone and Android share sheets.",
+  "description": "Private, categorised bookmarks stored in your own GitHub repo. Use it free at gitmarks.a9m.pro or host it yourself. Save from the web, a browser extension, the X timeline, and the iPhone and Android share sheets.",
   "license": "MIT",
   "type": "module",
   "private": true,
@@ -16,7 +16,9 @@
     "format": "prettier --write .",
     "format:check": "prettier --check .",
     "smoke": "node test/smoke.mjs",
-    "verify": "pnpm format:check && pnpm lint && pnpm check && pnpm test && pnpm build && pnpm smoke"
+    "verify": "pnpm format:check && pnpm lint && pnpm check && pnpm test && pnpm build && pnpm smoke",
+    "github-app": "node scripts/create-github-app.mjs",
+    "extension": "rm -f gitmarks-extension.zip && cd extension && zip -qr ../gitmarks-extension.zip . -x README.md STORE.md"
   },
   "dependencies": {
     "@astrojs/node": "^11.1.9",

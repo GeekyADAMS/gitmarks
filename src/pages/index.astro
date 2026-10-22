@@ -1,48 +1,58 @@
 ---
 import Shell from "@/components/Shell.astro";
 import Setup from "@/components/Setup.astro";
+import Landing from "@/components/Landing.astro";
 import Login from "@/components/Login";
 import Vault from "@/components/Vault";
-import { SESSION_COOKIE, checkSession, secret } from "@/lib/auth";
+import { secret } from "@/lib/auth";
+import { owner, keyFor } from "@/lib/owner";
 import { loadVault, publicRepoProblem } from "@/lib/server";
 import { githubConfig } from "@/lib/github";
+import { isHosted } from "@/lib/hosted";
 import { env } from "@/lib/env";
 import { EMPTY_VAULT } from "@/lib/vault";
 
 Astro.response.headers.set("Cache-Control", "private, no-store");
 
-// On Vercel there is no disk, so without a token there is nowhere to save.
+const hosted = isHosted();
+// Self-hosted on Vercel there is no disk, so without a token there is nowhere to save.
 const repo =
   env("GITMARKS_REPO") ??
   (env("VERCEL_GIT_REPO_OWNER")
     ? `${env("VERCEL_GIT_REPO_OWNER")}/${env("VERCEL_GIT_REPO_SLUG")}`
     : undefined);
-const setup = !secret()
-  ? "secret"
-  : process.env.VERCEL && !githubConfig()
-    ? "github"
-    : (await publicRepoProblem().catch(() => null))
-      ? "public"
-      : null;
-const configured = setup === null;
-const authed = configured && checkSession(Astro.cookies.get(SESSION_COOKIE)?.value);
+const missing = {
+  secret: !secret(),
+  github: !hosted && Boolean(process.env.VERCEL) && !githubConfig(),
+};
+
+const me =
+  missing.secret || missing.github ? null : await owner(Astro.request, Astro.cookies).catch(() => null);
+const publicRepo = me ? await publicRepoProblem(me.store).catch(() => null) : null;
 
 let initial = EMPTY_VAULT;
 let error = "";
-if (authed) {
+if (me && !publicRepo) {
   try {
-    initial = (await loadVault()).vault;
+    initial = (await loadVault(me.store)).vault;
   } catch (e) {
     error = e instanceof Error ? e.message : "Could not load your bookmarks.";
   }
 }
 ---
 
-<Shell title="gitmarks">
-  {setup ? (
-    <Setup step={setup} repo={repo} />
-  ) : authed ? (
-    <Vault client:load initial={initial} loadError={error} />
+<Shell
+  title={hosted && !me ? "gitmarks: private bookmarks in your own GitHub" : "gitmarks"}
+  index={hosted && !me}
+>
+  {missing.secret || missing.github ? (
+    <Setup missing={missing} repo={repo} />
+  ) : publicRepo ? (
+    <Setup publicRepo={publicRepo} hosted={hosted} />
+  ) : me ? (
+    <Vault client:load initial={initial} loadError={error} deviceKey={keyFor(me)} hosted={hosted} />
+  ) : hosted ? (
+    <Landing />
   ) : (
     <Login client:load />
   )}

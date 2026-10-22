@@ -5,3 +5,6 @@ dist/
 .env
 # Your bookmarks when running locally without GITHUB_TOKEN.
 .gitmarks-local.json
+# Written by scripts/create-github-app.mjs. Paste into your host, then delete.
+.env.github-app
+gitmarks-extension.zip

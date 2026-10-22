@@ -1,4 +1,6 @@
 const $ = (id) => document.getElementById(id);
+// Where most people's gitmarks lives. Self-hosters change it in settings.
+const HOSTED = "https://gitmarks.a9m.pro";
 const send = (message) => chrome.runtime.sendMessage(message);
 
 // Same colour per category as the web page, so a name looks the same in both.
@@ -60,7 +62,7 @@ async function showSettings(show) {
   $("settings").hidden = !show;
   $("save-view").hidden = show;
   if (show) {
-    const { base = "", token = "" } = await chrome.storage.local.get(["base", "token"]);
+    const { base = HOSTED, token = "" } = await chrome.storage.local.get(["base", "token"]);
     $("base").value = base;
     $("token").value = token;
   }
@@ -73,7 +75,7 @@ $("settings").onsubmit = async (event) => {
   try {
     base = new URL($("base").value.trim()).origin;
   } catch {
-    return say("Enter your gitmarks address, e.g. https://you.vercel.app", true);
+    return say(`Enter your gitmarks address, e.g. ${HOSTED}`, true);
   }
   // The browser shows its own prompt for this one site. It must be the first
   // await in the handler, or the click no longer counts as the user's gesture.
@@ -112,7 +114,7 @@ async function load() {
 
   const { token, base } = await chrome.storage.local.get(["token", "base"]);
   if (!token || !base) {
-    say("Add your gitmarks address and secret to connect.");
+    say("Paste your key to connect.");
     return showSettings(true);
   }
   renderChips([]);

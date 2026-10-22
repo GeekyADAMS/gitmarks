@@ -2,7 +2,7 @@
   "manifest_version": 3,
   "name": "gitmarks",
   "description": "Save the current page, any link, or any post on X into your own gitmarks.",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "action": {
     "default_popup": "popup.html",
     "default_title": "Save to gitmarks"

@@ -2,16 +2,16 @@ import { createHash, createHmac, timingSafeEqual } from "node:crypto";
 import { env } from "./env";
 
 /**
- * One secret, `GITMARKS_SECRET`, does three jobs: it is the password typed on
- * the page, the bearer token the extension and the phone Shortcut send, and
- * the key that signs session cookies. One thing to generate and paste is the
- * difference between a template people finish setting up and one they don't.
+ * `GITMARKS_SECRET` signs everything this server hands out: session cookies,
+ * device keys and sign-in state. Self-hosted, it is also the password typed on
+ * the page — one thing to generate and paste is the difference between a
+ * template people finish setting up and one they don't.
  *
  * That only holds up if the secret is long and random, so a short one is
  * refused outright rather than accepted with a warning.
  */
 export const SESSION_COOKIE = "gitmarks_session";
-const SESSION_MS = 30 * 24 * 60 * 60 * 1000;
+export const SESSION_MS = 30 * 24 * 60 * 60 * 1000;
 export const MIN_SECRET_LENGTH = 24;
 
 export function secret(): string | undefined {
@@ -20,56 +20,98 @@ export function secret(): string | undefined {
 }
 
 /** Constant-time, and length-blind: both sides are hashed to 32 bytes first. */
-function same(a: string, b: string): boolean {
+export function same(a: string, b: string): boolean {
   const digest = (s: string) => createHash("sha256").update(s).digest();
   return timingSafeEqual(digest(a), digest(b));
 }
 
+/**
+ * Who a session or device key belongs to. Self-hosted there is one owner, so
+ * it is empty. Hosted, it names the GitHub App installation, the one repo the
+ * bookmarks live in, and the GitHub user who signed in.
+ */
+export type Claims = { i?: number; r?: string; u?: number };
+
+/**
+ * `body.signature`, where the body is base64url JSON. The purpose is part of
+ * what is signed, so a token minted for one job is worthless for another.
+ */
+export function seal(purpose: string, claims: object): string | null {
+  const key = secret();
+  if (!key) return null;
+  const body = Buffer.from(JSON.stringify(claims)).toString("base64url");
+  return `${body}.${mac(purpose, body, key)}`;
+}
+
+/** The claims, if the token is genuine, for this purpose, and unexpired. */
+export function unseal<T extends object>(purpose: string, token: string | undefined, now = Date.now()) {
+  const key = secret();
+  const dot = token?.lastIndexOf(".") ?? -1;
+  if (!key || !token || dot < 1) return null;
+  const body = token.slice(0, dot);
+  if (!same(mac(purpose, body, key), token.slice(dot + 1))) return null;
+  try {
+    const claims = JSON.parse(Buffer.from(body, "base64url").toString("utf8")) as T & { exp?: number };
+    return typeof claims.exp === "number" && claims.exp <= now ? null : claims;
+  } catch {
+    return null;
+  }
+}
+
+const mac = (purpose: string, body: string, key: string) =>
+  createHmac("sha256", key).update(`${purpose}:${body}`).digest("base64url");
+
+/** A session carries its own expiry, signed so it can be neither forged nor extended. */
+export function createSession(claims: Claims = {}, now = Date.now()): string | null {
+  return seal("session", { ...claims, exp: now + SESSION_MS });
+}
+
+export function readSession(token: string | undefined, now = Date.now()): Claims | null {
+  return unseal<Claims>("session", token, now);
+}
+
+/**
+ * What the extension and the phone Shortcut send as their bearer token. It
+ * never expires, because a Shortcut that silently stops working is worse;
+ * self-hosted, changing the secret revokes every key, and hosted, so does
+ * uninstalling the GitHub App. Self-hosted there is exactly one key, so the
+ * page can show it without ever showing the secret it is derived from.
+ */
+export function deviceKey(claims: Claims): string | null {
+  const { i, r, u } = claims;
+  const sealed = seal("device", { i, r, u });
+  return sealed && `gm_${sealed}`;
+}
+
+export function readDeviceKey(header: string | null): Claims | null {
+  const key = header?.match(/^Bearer gm_(\S+)$/)?.[1];
+  return key ? unseal<Claims>("device", key) : null;
+}
+
+/** Self-hosted only: the secret typed on the page. */
 export function checkPassword(attempt: string): boolean {
   const key = secret();
   return Boolean(key) && same(attempt.trim(), key!);
 }
 
+/** Self-hosted only: devices set up before device keys existed send the secret itself. */
 export function checkBearer(header: string | null): boolean {
   const key = secret();
   return Boolean(key && header) && same(header!, `Bearer ${key}`);
 }
 
-const sign = (value: string, key: string) =>
-  createHmac("sha256", key).update(`session:${value}`).digest("hex");
-
-/** A token carrying its own expiry, signed so it can be neither forged nor extended. */
-export function createSession(now = Date.now()): string | null {
-  const key = secret();
-  if (!key) return null;
-  const expires = String(now + SESSION_MS);
-  return `${expires}.${sign(expires, key)}`;
-}
-
-export function checkSession(token: string | undefined, now = Date.now()): boolean {
-  const key = secret();
-  if (!key || !token) return false;
-  const [expires, signature] = token.split(".");
-  if (!expires || !signature) return false;
-  return same(sign(expires, key), signature) && Number(expires) > now;
-}
-
 /** `secure` follows the request, so the cookie works on http://localhost and is HTTPS-only everywhere else. */
-export function sessionCookie(secure: boolean) {
+export function sessionCookie(secure: boolean, maxAge = SESSION_MS / 1000) {
   return {
     httpOnly: true,
-    // `lax`, so opening your vault from a link in another app arrives signed in.
+    // `lax`, so opening your vault from a link in another app arrives signed in,
+    // and so the sign-in cookie survives the redirect back from GitHub.
     // Writes are same-site fetches, which `lax` still protects.
     sameSite: "lax" as const,
     secure,
     path: "/",
-    maxAge: SESSION_MS / 1000,
+    maxAge,
   };
-}
-
-/** The page's cookie, or the bearer token from the extension or Shortcut. */
-export function isOwner(request: Request, cookie: string | undefined): boolean {
-  return checkSession(cookie) || checkBearer(request.headers.get("authorization"));
 }
 
 // ponytail: per-process throttle. On serverless each instance counts on its

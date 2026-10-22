@@ -103,7 +103,18 @@ const isTyping = (target: EventTarget | null) =>
 
 // --- The page ----------------------------------------------------------------
 
-export default function Vault({ initial, loadError }: { initial: VaultData; loadError?: string }) {
+export default function Vault({
+  initial,
+  loadError,
+  deviceKey,
+  hosted,
+}: {
+  initial: VaultData;
+  loadError?: string;
+  /** What the extension and the Shortcut send. Shown in Connect, to copy. */
+  deviceKey: string;
+  hosted: boolean;
+}) {
   // What the server last confirmed, plus changes still in flight on top of it.
   // Showing `pending` through the same reducer the server runs is what makes
   // every action feel instant without the two ever disagreeing for long.
@@ -336,7 +347,7 @@ export default function Vault({ initial, loadError }: { initial: VaultData; load
                   /
                 </kbd>
               </label>
-              <ConnectButton />
+              <ConnectButton deviceKey={deviceKey} hosted={hosted} />
               <button
                 type="button"
                 aria-label="Sign out"
@@ -1097,16 +1108,46 @@ function Empty({ view, searching, hasAny }: { view: View; searching: boolean; ha
 const SHORTCUT_LINK = "https://github.com/GeekyADAMS/gitmarks/tree/main/shortcut#install-it-two-minutes";
 const EXTENSION_LINK = "https://github.com/GeekyADAMS/gitmarks/tree/main/extension#readme";
 
-/** How to save from everywhere else, with this deployment's address ready to copy. */
-function ConnectButton() {
-  const dialog = useRef<HTMLDialogElement>(null);
+/**
+ * A bookmark whose address is a script: on any page, it opens this site's
+ * share page with that page's link. Nothing to install, so it covers Safari,
+ * Firefox and every browser the extension doesn't.
+ */
+const bookmarklet = (origin: string) =>
+  `javascript:void window.open(${JSON.stringify(`${origin}/share?popup=1&url=`)}+encodeURIComponent(location.href)+"&title="+encodeURIComponent(document.title),"gitmarks","popup,width=440,height=680")`;
+
+function CopyRow({ label, value, shown }: { label: string; value: string; shown: string }) {
   const [copied, setCopied] = useState(false);
+  return (
+    <button
+      type="button"
+      onClick={async () => {
+        await navigator.clipboard.writeText(value);
+        setCopied(true);
+        setTimeout(() => setCopied(false), 1600);
+      }}
+      className="flex w-full cursor-pointer items-center gap-3 rounded-xl border border-line-strong bg-surface-raised px-4 py-3 text-left"
+    >
+      <span className="w-16 shrink-0 font-mono text-[11px] uppercase tracking-[0.14em] text-ink-muted">
+        {label}
+      </span>
+      <span className="min-w-0 flex-1 truncate font-mono text-[13px]">{shown}</span>
+      <span className="shrink-0 text-[13px] text-ink-muted">{copied ? "Copied" : "Copy"}</span>
+    </button>
+  );
+}
+
+/** How to save from everywhere else, with the address and key ready to copy. */
+function ConnectButton({ deviceKey, hosted }: { deviceKey: string; hosted: boolean }) {
+  const dialog = useRef<HTMLDialogElement>(null);
+  const [hint, setHint] = useState(false);
   const origin = useSyncExternalStore(
     () => () => {},
     () => window.location.origin,
     () => "",
   );
   const step = "rounded-2xl border border-line bg-surface-raised p-4";
+  const link = "text-ink underline underline-offset-2";
   return (
     <>
       <button
@@ -1124,36 +1165,30 @@ function ConnectButton() {
         ref={dialog}
         aria-labelledby="connect-title"
         onClick={(e) => e.target === e.currentTarget && e.currentTarget.close()}
-        className="m-auto w-[min(560px,calc(100vw-2rem))] rounded-3xl border border-line bg-surface p-0 text-ink backdrop:bg-black/40 backdrop:backdrop-blur-sm"
+        className="m-auto max-h-[calc(100dvh-2rem)] w-[min(560px,calc(100vw-2rem))] rounded-3xl border border-line bg-surface p-0 text-ink backdrop:bg-black/40 backdrop:backdrop-blur-sm"
       >
         <div className="space-y-3 p-6">
           <h2 id="connect-title" className="font-display text-2xl font-semibold tracking-[-0.02em]">
             Save from everywhere
           </h2>
           <p className="text-[14px] text-ink-muted">
-            Each one asks for this address and your GITMARKS_SECRET.
+            {hosted
+              ? "Each device asks for your key once. Keep it private: it can save to your gitmarks."
+              : "Each device asks for this address and your key once. Keep the key private: it can save to your gitmarks."}
           </p>
-          <button
-            type="button"
-            onClick={async () => {
-              await navigator.clipboard.writeText(origin);
-              setCopied(true);
-            }}
-            className="flex w-full cursor-pointer items-center justify-between rounded-xl border border-line-strong bg-surface-raised px-4 py-3 text-left font-mono text-[13px]"
-          >
-            <span className="truncate">{origin}</span>
-            <span className="ml-3 shrink-0 text-ink-muted">{copied ? "Copied" : "Copy"}</span>
-          </button>
+          <div className="space-y-2">
+            <CopyRow label="Address" value={origin} shown={origin} />
+            <CopyRow
+              label="Key"
+              value={deviceKey}
+              shown={`${deviceKey.slice(0, 6)}••••••••${deviceKey.slice(-4)}`}
+            />
+          </div>
           <div className={step}>
             <p className="font-medium">iPhone & iPad</p>
             <p className="mt-1 text-[14px] text-ink-muted">
-              Install the Shortcut, then Share → Save to gitmarks from any app.{" "}
-              <a
-                className="text-ink underline underline-offset-2"
-                href={SHORTCUT_LINK}
-                target="_blank"
-                rel="noopener noreferrer"
-              >
+              Add the Shortcut and paste your key when it asks. Then Share → Save to gitmarks from any app.{" "}
+              <a className={link} href={SHORTCUT_LINK} target="_blank" rel="noopener noreferrer">
                 Get the Shortcut
               </a>
             </p>
@@ -1161,24 +1196,45 @@ function ConnectButton() {
           <div className={step}>
             <p className="font-medium">Android</p>
             <p className="mt-1 text-[14px] text-ink-muted">
-              Open this page in Chrome, sign in, then menu → Add to Home screen → Install. gitmarks then
-              appears in every app&apos;s Share menu.
+              Open this page in Chrome, then menu → Add to Home screen → Install. gitmarks then appears in
+              every app&apos;s Share menu. No key needed.
             </p>
           </div>
           <div className={step}>
             <p className="font-medium">Chrome, Arc, Brave, Edge</p>
             <p className="mt-1 text-[14px] text-ink-muted">
-              Load the extension for the toolbar button, right-click saving, and a save button on every post
-              on X.{" "}
-              <a
-                className="text-ink underline underline-offset-2"
-                href={EXTENSION_LINK}
-                target="_blank"
-                rel="noopener noreferrer"
-              >
-                Set up the extension
+              A toolbar button, right-click saving, and a save button on every post on X. Open it once and
+              paste your key.{" "}
+              <a className={link} href={EXTENSION_LINK} target="_blank" rel="noopener noreferrer">
+                Get the extension
               </a>
             </p>
+          </div>
+          <div className={step}>
+            <p className="font-medium">Safari, Firefox, any browser</p>
+            <p className="mt-1 text-[14px] text-ink-muted">
+              Drag this button to your bookmarks bar. Click it on any page to save that page.
+            </p>
+            <a
+              href="#save-to-gitmarks"
+              // React refuses `javascript:` URLs in JSX, so the real address is set directly.
+              ref={(el) => {
+                if (el && origin) el.setAttribute("href", bookmarklet(origin));
+              }}
+              onClick={(e) => {
+                e.preventDefault();
+                setHint(true);
+              }}
+              draggable
+              className="mt-3 inline-flex h-9 cursor-grab items-center gap-2 rounded-xl bg-ink px-3.5 text-[13px] font-medium text-surface"
+            >
+              <LinkSimple size={14} aria-hidden="true" /> Save to gitmarks
+            </a>
+            {hint && (
+              <p role="status" className="mt-2 text-[13px] text-ink-muted">
+                Drag it, don&apos;t click it: drop it onto your bookmarks bar.
+              </p>
+            )}
           </div>
           <form method="dialog" className="pt-1 text-right">
             <button className="cursor-pointer rounded-xl bg-ink px-4 py-2 text-[14px] font-medium text-surface">
