@@ -30,7 +30,8 @@ pnpm dev                      # http://localhost:4321
 ```
 
 Without `GITHUB_TOKEN`, bookmarks go to `.gitmarks-local.json`, which git ignores.
-Nothing touches GitHub.
+Nothing touches GitHub. The smoke test covers hosted mode against a fake GitHub, so
+you don't need a GitHub App to work on it.
 
 ## Before you open a PR
 
@@ -55,12 +56,15 @@ can merge.
 | `src/lib/vault.ts`                     | Types, URL normalising, request validation, and the reducer. Shared by the server and the page, with no I/O. |
 | `src/lib/server.ts`                    | Loading and saving (GitHub or a local file), compare-and-swap retries, link previews                         |
 | `src/lib/net.ts`                       | `safeFetch`: SSRF protection for preview fetches                                                             |
-| `src/lib/auth.ts`                      | The secret, sessions, the bearer token, login throttling                                                     |
+| `src/lib/auth.ts`                      | The secret, signed sessions and device keys, login throttling                                                |
+| `src/lib/hosted.ts`                    | Hosted mode: the GitHub App's JWT, per-repo installation tokens, sign-in checks                              |
+| `src/lib/owner.ts`                     | Who a request is from, and which repo is theirs, in either mode                                              |
 | `src/lib/github.ts`                    | The GitHub Contents API, repo visibility                                                                     |
 | `src/middleware.ts`                    | Security headers and the cross-site write check                                                              |
-| `src/pages/api/`                       | `vault` (read and write), `login`, `logout`                                                                  |
+| `src/pages/api/`                       | `vault` (read and write), `login`, `logout`, and `auth/` (GitHub sign-in, hosted)                            |
 | `src/pages/index.astro`, `share.astro` | The app, and Android's share target                                                                          |
-| `src/components/`                      | React islands (`Vault`, `Login`, `Share`) and Astro layout pieces                                            |
+| `src/components/`                      | React islands (`Vault`, `Login`, `Share`), the hosted `Landing`, and Astro layout pieces                     |
+| `scripts/create-github-app.mjs`        | Registers the GitHub App for hosted mode, in one click                                                       |
 | `extension/`                           | The Chrome/Arc/Brave/Edge extension (plain JS, no build step)                                                |
 | `shortcut/`                            | The iPhone Shortcut: install and build guide                                                                 |
 | `test/smoke.mjs`                       | Boots the production build and checks it from outside                                                        |

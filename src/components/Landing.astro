@@ -1,0 +1,213 @@
+---
+import { app, installUrl, safePath } from "@/lib/hosted";
+
+/**
+ * The hosted front door. Two steps on GitHub — make a private repo, let
+ * gitmarks use only that repo — and the second one lands back here signed in.
+ * Problems from a sign-in come back as `?error=`, and are explained in place.
+ */
+interface Props {
+  /** Where to go after signing in: the share page, when that is what asked. */
+  returnTo?: string;
+}
+const a = app()!;
+const signIn = `/api/auth/start?to=${encodeURIComponent(safePath(Astro.props.returnTo))}`;
+const connect = installUrl(a);
+const newRepo =
+  "https://github.com/new?" +
+  new URLSearchParams({
+    name: "bookmarks",
+    owner: "@me",
+    visibility: "private",
+    description: "My gitmarks bookmarks",
+  });
+
+const params = Astro.url.searchParams;
+const installation = /^\d+$/.test(params.get("installation") ?? "") ? params.get("installation") : null;
+const repo = params.get("repo") ?? "";
+const problems: Record<string, { text: string; fix?: { label: string; href: string } }> = {
+  state: { text: "That sign-in took too long or started somewhere else. Try again." },
+  denied: { text: "GitHub sign-in was cancelled. Nothing was connected." },
+  github: { text: "GitHub didn't answer just now. Give it a moment and try again." },
+  install: {
+    text: "You're signed in to GitHub, but gitmarks isn't connected to a repo yet. Do step 2 below.",
+  },
+  many: {
+    text: "gitmarks can see more than one of your repos. Keep it to just your bookmarks: choose Only select repositories, and pick one.",
+    ...(installation && {
+      fix: { label: "Fix it on GitHub", href: `https://github.com/settings/installations/${installation}` },
+    }),
+  },
+  public: {
+    text: `${repo || "That repo"} is public, so anyone could read your bookmarks. Make it private, then sign in again.`,
+    ...(/^[\w.-]+\/[\w.-]+$/.test(repo) && {
+      fix: { label: "Open its settings", href: `https://github.com/${repo}/settings` },
+    }),
+  },
+};
+const problem = problems[params.get("error") ?? ""];
+
+const label = "font-mono text-xs uppercase tracking-[0.14em] text-ink-muted";
+const primary =
+  "inline-flex h-12 items-center justify-center gap-2 rounded-2xl bg-ink px-6 text-[15px] font-medium text-surface transition-opacity hover:opacity-90";
+const secondary =
+  "inline-flex h-12 items-center justify-center gap-2 rounded-2xl border border-line-strong bg-surface-raised px-6 text-[15px] font-medium transition-colors hover:border-ink-muted";
+const tile = "rounded-3xl border border-line bg-surface-raised p-6";
+const REPO = "https://github.com/GeekyADAMS/gitmarks";
+const github = `<svg aria-hidden="true" width="18" height="18" viewBox="0 0 16 16" fill="currentColor"><path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27s1.36.09 2 .27c1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.01 8.01 0 0 0 16 8c0-4.42-3.58-8-8-8"/></svg>`;
+---
+
+<div class="mx-auto max-w-[1120px] px-5 pb-16 md:px-8">
+  <header class="flex h-20 items-center justify-between">
+    <span class="font-display text-xl font-semibold tracking-[-0.03em]">gitmarks</span>
+    <nav class="flex items-center gap-1 text-[14px]">
+      <a href={REPO} class="rounded-xl px-3 py-2 text-ink-muted transition-colors hover:text-ink">
+        Source
+      </a>
+      <a href={signIn} class="rounded-xl px-3 py-2 font-medium">
+        Sign in
+      </a>
+    </nav>
+  </header>
+
+  <section class="mx-auto max-w-[760px] pb-12 pt-10 text-center md:pt-16">
+    <p class={label}>Free · Open source · No database</p>
+    <h1 class="mt-5 font-display text-[clamp(2.6rem,7vw,4.6rem)] font-semibold leading-[1.02] tracking-[-0.045em]">
+      Bookmarks that are{" "}
+      <span class="bg-signal px-[0.12em] text-signal-ink [box-decoration-break:clone]">actually yours</span>.
+    </h1>
+    <p class="mx-auto mt-6 max-w-[580px] text-[17px] leading-relaxed text-ink-muted">
+      Sort posts, videos and articles into your own categories. Save from X, your phone or any browser in one
+      tap. It all lives in a private GitHub repo that you own, and every save is a commit.
+    </p>
+    <div class="mt-8 flex flex-col items-center justify-center gap-3 sm:flex-row">
+      <a href="#start" class={primary}>
+        Get started, free
+      </a>
+      <a href={signIn} class={secondary}>
+        <Fragment set:html={github} /> Sign in with GitHub
+      </a>
+    </div>
+    <p class="mt-4 text-[13px] text-ink-muted">No new account. About a minute to set up.</p>
+  </section>
+
+  <figure class="overflow-hidden rounded-[28px] border border-line bg-[#151515] shadow-[0_30px_80px_-30px_rgb(0_0_0/0.35)]">
+    <img
+      src="/hero.webp"
+      width="1600"
+      height="994"
+      alt="gitmarks: categories on the left, rich previews of posts, videos and articles in a grid"
+      class="block h-auto w-full"
+    />
+  </figure>
+
+  <section id="start" class="mx-auto max-w-[760px] scroll-mt-8 pt-24">
+    <p class={`${label} text-center`}>Set up in a minute</p>
+    <h2 class="mt-3 text-center font-display text-[2.2rem] font-semibold tracking-[-0.035em]">
+      Two clicks on GitHub
+    </h2>
+
+    {problem && (
+      <div role="alert" class="mt-8 rounded-2xl border border-line-strong bg-surface-sunken p-4 text-[15px]">
+        <p>{problem.text}</p>
+        {problem.fix && (
+          <a
+            href={problem.fix.href}
+            target="_blank"
+            rel="noopener noreferrer"
+            class="mt-2 inline-block font-medium underline underline-offset-2"
+          >
+            {problem.fix.label} ↗
+          </a>
+        )}
+      </div>
+    )}
+
+    <ol class="mt-8 grid gap-4 md:grid-cols-2">
+      <li class={tile}>
+        <span class="flex h-9 w-9 items-center justify-center rounded-full bg-ink font-display text-[15px] font-semibold text-surface">
+          1
+        </span>
+        <h3 class="mt-5 font-display text-xl font-semibold tracking-[-0.02em]">Make a private repo</h3>
+        <p class="mt-2 text-[15px] leading-relaxed text-ink-muted">
+          This is where your bookmarks will live. It's yours: gitmarks never keeps a copy. Keep it{" "}
+          <strong class="text-ink">Private</strong>.
+        </p>
+        <a href={newRepo} target="_blank" rel="noopener noreferrer" class={`${secondary} mt-6 w-full`}>
+          Create it on GitHub ↗
+        </a>
+      </li>
+      <li class={tile}>
+        <span class="flex h-9 w-9 items-center justify-center rounded-full bg-ink font-display text-[15px] font-semibold text-surface">
+          2
+        </span>
+        <h3 class="mt-5 font-display text-xl font-semibold tracking-[-0.02em]">Connect it to gitmarks</h3>
+        <p class="mt-2 text-[15px] leading-relaxed text-ink-muted">
+          Choose <strong class="text-ink">Only select repositories</strong>, pick that repo, and install.
+          You'll land back here, signed in.
+        </p>
+        <a href={connect} class={`${primary} mt-6 w-full`}>
+          <Fragment set:html={github} /> Connect on GitHub
+        </a>
+      </li>
+    </ol>
+    <p class="mt-5 text-center text-[14px] text-ink-muted">
+      Done this before?{" "}
+      <a href={signIn} class="font-medium text-ink underline underline-offset-2">
+        Sign in
+      </a>
+      .
+    </p>
+  </section>
+
+  <section class="grid gap-4 pt-24 md:grid-cols-3">
+    <div class={tile}>
+      <h3 class="font-display text-lg font-semibold tracking-[-0.02em]">One tap from anywhere</h3>
+      <p class="mt-2 text-[15px] leading-relaxed text-ink-muted">
+        The Share sheet on iPhone and Android, a Chrome extension with a button on every post on X, and a
+        bookmark-bar button for Safari and Firefox.
+      </p>
+    </div>
+    <div class={tile}>
+      <h3 class="font-display text-lg font-semibold tracking-[-0.02em]">Sorted your way</h3>
+      <p class="mt-2 text-[15px] leading-relaxed text-ink-muted">
+        Your own categories, drag and drop, notes on anything, rich previews, and search that highlights every
+        match.
+      </p>
+    </div>
+    <div class={tile}>
+      <h3 class="font-display text-lg font-semibold tracking-[-0.02em]">Private by design</h3>
+      <p class="mt-2 text-[15px] leading-relaxed text-ink-muted">
+        gitmarks can open only the one repo you pick, and stores nothing about you. Leave any time: your
+        bookmarks are a JSON file you already have.
+      </p>
+    </div>
+  </section>
+
+  <section class="mt-4 flex flex-col items-start justify-between gap-4 rounded-3xl border border-line p-6 md:flex-row md:items-center">
+    <div>
+      <h3 class="font-display text-lg font-semibold tracking-[-0.02em]">Want maximum privacy?</h3>
+      <p class="mt-1 text-[15px] text-ink-muted">
+        Host your own copy on Vercel's free tier. Then nobody but you can open your repo.
+      </p>
+    </div>
+    <a href={`${REPO}#host-it-yourself`} class={secondary}>
+      Host it yourself ↗
+    </a>
+  </section>
+
+  <footer class="mt-16 flex flex-wrap items-center justify-between gap-3 text-[13px] text-ink-muted">
+    <span>gitmarks · MIT licence</span>
+    <span class="flex gap-4">
+      <a href={`${REPO}/blob/main/PRIVACY.md`} class="hover:text-ink">
+        Privacy
+      </a>
+      <a href={`${REPO}/blob/main/SECURITY.md`} class="hover:text-ink">
+        Security
+      </a>
+      <a href={REPO} class="hover:text-ink">
+        GitHub
+      </a>
+    </span>
+  </footer>
+</div>

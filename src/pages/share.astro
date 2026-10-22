@@ -1,33 +1,41 @@
 ---
 import Shell from "@/components/Shell.astro";
 import Setup from "@/components/Setup.astro";
+import Landing from "@/components/Landing.astro";
 import Login from "@/components/Login";
 import Share from "@/components/Share";
-import { SESSION_COOKIE, checkSession, secret } from "@/lib/auth";
+import { secret } from "@/lib/auth";
+import { isHosted } from "@/lib/hosted";
+import { owner } from "@/lib/owner";
 import { loadVault } from "@/lib/server";
 import { extractUrls } from "@/lib/vault";
 
 /**
- * Android's share target (see public/manifest.webmanifest). Apps disagree on
- * where the link goes — some send `url`, many put it inside `text` — so both
- * are searched for the first link.
+ * Android's share target (see public/manifest.webmanifest), and the page the
+ * bookmarklet opens. Apps disagree on where the link goes — some send `url`,
+ * many put it inside `text` — so both are searched for the first link.
  */
 Astro.response.headers.set("Cache-Control", "private, no-store");
 
 const params = Astro.url.searchParams;
 const url = extractUrls(`${params.get("url") ?? ""} ${params.get("text") ?? ""}`)[0];
 const title = (params.get("title") ?? "").trim();
+const popup = params.get("popup") === "1";
 
 const configured = Boolean(secret());
-const authed = configured && checkSession(Astro.cookies.get(SESSION_COOKIE)?.value);
-const categories = authed && url ? ((await loadVault().catch(() => null))?.vault.categories ?? []) : [];
+const me = configured ? await owner(Astro.request, Astro.cookies).catch(() => null) : null;
+const categories = me && url ? ((await loadVault(me.store).catch(() => null))?.vault.categories ?? []) : [];
 ---
 
 <Shell title="Save · gitmarks">
   {!configured ? (
-    <Setup step="secret" />
-  ) : !authed ? (
-    <Login client:load />
+    <Setup missing={{ secret: true, github: false }} />
+  ) : !me ? (
+    isHosted() ? (
+      <Landing returnTo={Astro.url.pathname + Astro.url.search} />
+    ) : (
+      <Login client:load />
+    )
   ) : !url ? (
     <div class="flex min-h-dvh flex-col items-center justify-center px-6 text-center">
       <p class="font-display text-2xl font-semibold tracking-tight">No link in that share.</p>
@@ -39,6 +47,6 @@ const categories = authed && url ? ((await loadVault().catch(() => null))?.vault
       </a>
     </div>
   ) : (
-    <Share client:load url={url} title={title} categories={categories} />
+    <Share client:load url={url} title={title} categories={categories} popup={popup} />
   )}
 </Shell>

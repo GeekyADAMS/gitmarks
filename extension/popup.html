@@ -169,6 +169,11 @@
       .msg.error {
         color: #dc2626;
       }
+      .hint {
+        margin: -2px 2px 4px;
+        color: var(--muted);
+        font-size: 12px;
+      }
       form#settings {
         display: grid;
         gap: 8px;
@@ -195,10 +200,12 @@
     </section>
 
     <form id="settings" hidden>
-      <label class="label" for="base">Your gitmarks address</label>
-      <input id="base" placeholder="https://your-gitmarks.vercel.app" />
-      <label class="label" for="token">Secret (GITMARKS_SECRET)</label>
-      <input id="token" type="password" autocomplete="off" />
+      <label class="label" for="token">Your key</label>
+      <input id="token" type="password" autocomplete="off" placeholder="gm_…" />
+      <p class="hint">In gitmarks, click Connect, then copy your key.</p>
+      <label class="label" for="base">Address</label>
+      <input id="base" />
+      <p class="hint">Leave it as it is, unless you host gitmarks yourself.</p>
       <button class="save" type="submit">Save settings</button>
     </form>
 

@@ -1,4 +1,4 @@
-// Every request to your gitmarks goes through here: one place holds the secret,
+// Every request to your gitmarks goes through here: one place holds the key,
 // and the host permission granted at setup is what lets it skip CORS.
 
 async function settings() {
@@ -9,7 +9,7 @@ async function settings() {
 async function api(method, body) {
   const { base, token } = await settings();
   if (!base || !token) {
-    return { ok: false, error: "Open the extension and add your gitmarks address and secret." };
+    return { ok: false, error: "Open the extension and paste your key." };
   }
   try {
     const res = await fetch(`${base}/api/vault`, {
@@ -18,7 +18,8 @@ async function api(method, body) {
       body: body ? JSON.stringify(body) : undefined,
     });
     // The API answers anyone it does not recognise with a plain 404.
-    if (res.status === 404) return { ok: false, error: "Your gitmarks rejected that secret." };
+    if (res.status === 404)
+      return { ok: false, error: "gitmarks didn't recognise that key. Copy it again from Connect." };
     return await res.json();
   } catch {
     return { ok: false, error: `Could not reach ${base}.` };

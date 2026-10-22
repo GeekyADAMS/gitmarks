@@ -4,7 +4,8 @@ import { randomUUID } from "node:crypto";
 import * as cheerio from "cheerio";
 
 import { safeFetch } from "./net";
-import { githubConfig, isRepoPublic, readFile, writeFile, type WriteResult } from "./github";
+import { isRepoPublic, readFile, writeFile, type Repo, type WriteResult } from "./github";
+import { isHosted } from "./hosted";
 import { env } from "./env";
 import {
   EMPTY_VAULT,
@@ -18,8 +19,9 @@ import {
 } from "./vault";
 
 /**
- * With GITHUB_TOKEN set, the vault is `data/vault.json` in your repo. Without
- * it, a gitignored file next to the app, which is what local development uses.
+ * In a GitHub repo, the vault is `data/vault.json` — the same path hosted and
+ * self-hosted, so moving between the two is copying one file. Without a repo,
+ * it is a gitignored file next to the app, which is what local development uses.
  */
 const FILE = "data/vault.json";
 const LOCAL_FILE = path.join(process.cwd(), ".gitmarks-local.json");
@@ -36,19 +38,17 @@ function parse(text: string): Vault {
 
 /**
  * Bookmarks in a public repo are bookmarks anyone can read, so a public repo
- * stops saving until it is made private — or the owner opts in on purpose
- * with GITMARKS_ALLOW_PUBLIC=true.
+ * stops saving until it is made private. Self-hosted, the owner can opt in on
+ * purpose with GITMARKS_ALLOW_PUBLIC=true; hosted, nobody can.
  */
-export async function publicRepoProblem(): Promise<string | null> {
-  const github = githubConfig();
-  if (!github || env("GITMARKS_ALLOW_PUBLIC") === "true") return null;
-  return (await isRepoPublic(github)) ? github.repo : null;
+export async function publicRepoProblem(store: Repo | null): Promise<string | null> {
+  if (!store || (!isHosted() && env("GITMARKS_ALLOW_PUBLIC") === "true")) return null;
+  return (await isRepoPublic(store)) ? store.repo : null;
 }
 
-export async function loadVault(): Promise<{ vault: Vault; sha: string | null }> {
-  const github = githubConfig();
-  if (github) {
-    const file = await readFile(github, FILE);
+export async function loadVault(store: Repo | null): Promise<{ vault: Vault; sha: string | null }> {
+  if (store) {
+    const file = await readFile(store, FILE);
     return { vault: file ? parse(file.text) : EMPTY_VAULT, sha: file?.sha ?? null };
   }
   try {
@@ -59,10 +59,14 @@ export async function loadVault(): Promise<{ vault: Vault; sha: string | null }>
   }
 }
 
-async function saveVault(vault: Vault, sha: string | null, message: string): Promise<WriteResult> {
+async function saveVault(
+  store: Repo | null,
+  vault: Vault,
+  sha: string | null,
+  message: string,
+): Promise<WriteResult> {
   const text = JSON.stringify(vault, null, 2) + "\n";
-  const github = githubConfig();
-  if (github) return writeFile(github, FILE, text, sha, message);
+  if (store) return writeFile(store, FILE, text, sha, message);
   if (process.env.VERCEL) {
     return { ok: false, error: "Set GITHUB_TOKEN: this host has no disk to keep bookmarks on." };
   }
@@ -76,31 +80,35 @@ export type VaultResult = { ok: true; vault: Vault } | { ok: false; error: strin
  * Read, apply, write — and if the file moved underneath us (the extension and
  * the page saving at once), read again and re-apply rather than overwrite.
  */
-async function mutate(actions: VaultAction[], message: string): Promise<VaultResult> {
+async function mutate(store: Repo | null, actions: VaultAction[], message: string): Promise<VaultResult> {
   for (let attempt = 0; attempt < 4; attempt++) {
     if (attempt) await new Promise((r) => setTimeout(r, 250 * attempt));
-    const { vault, sha } = await loadVault();
+    const { vault, sha } = await loadVault(store);
     const next = actions.reduce(applyAction, vault);
-    const result = await saveVault(next, sha, message);
+    const result = await saveVault(store, next, sha, message);
     if (result.ok) return { ok: true, vault: next };
     if (!result.conflict) return result;
   }
   return { ok: false, error: "The vault kept changing during this save. Try again." };
 }
 
-export async function performRequest(request: VaultRequest): Promise<VaultResult> {
+export async function performRequest(store: Repo | null, request: VaultRequest): Promise<VaultResult> {
   try {
-    const publicRepo = await publicRepoProblem();
+    const publicRepo = await publicRepoProblem(store);
     if (publicRepo) {
       return { ok: false, error: `${publicRepo} is public, so saving is paused. Make it private on GitHub.` };
     }
-    if (request.type !== "add") return await mutate([request], `gitmarks: ${request.type}`);
+    if (request.type !== "add") return await mutate(store, [request], `gitmarks: ${request.type}`);
     const marks = await Promise.all(
       request.urls.map((url) => buildMark(url, request.category ?? "", request.note)),
     );
     // Reversed so the first URL of a batch ends up on top.
     const puts = marks.reverse().map((mark): VaultAction => ({ type: "put", mark }));
-    return await mutate(puts, `gitmarks: add ${marks.length === 1 ? marks[0].url : `${marks.length} links`}`);
+    return await mutate(
+      store,
+      puts,
+      `gitmarks: add ${marks.length === 1 ? marks[0].url : `${marks.length} links`}`,
+    );
   } catch (error) {
     return { ok: false, error: error instanceof Error ? error.message : "Save failed." };
   }

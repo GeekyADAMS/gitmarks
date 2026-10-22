@@ -1,93 +1,141 @@
 ---
-import { MIN_SECRET_LENGTH } from "@/lib/auth";
+import { randomBytes } from "node:crypto";
 
 /**
- * Shown until the deployment can actually work. The Deploy button creates the
- * repo, so a token scoped to it can only be made afterwards — this page names
- * the repo, so that step needs no guessing.
+ * Shown until a self-hosted deployment can actually work, and whenever the
+ * bookmarks repo turns out to be public.
+ *
+ * Everything missing is asked for on one page, so setting up is one trip to
+ * Vercel and one redeploy. The secret is generated here, fresh on every load:
+ * it only means something once the owner pastes it into Vercel. The token link
+ * pre-fills GitHub's form, leaving one choice: which repo.
  */
 interface Props {
-  step: "secret" | "github" | "public";
+  missing?: { secret: boolean; github: boolean };
   repo?: string;
+  publicRepo?: string;
+  hosted?: boolean;
 }
-const { step, repo } = Astro.props;
+const { missing, repo, publicRepo, hosted } = Astro.props;
 const code = "rounded bg-surface-raised px-1.5 py-0.5 font-mono text-[13px] text-ink border border-line";
+const card = "rounded-2xl border border-line bg-surface-raised p-5";
+const label = "font-mono text-xs uppercase tracking-[0.14em] text-ink-muted";
+
+const generated = randomBytes(32).toString("base64url");
+const owner = repo?.split("/")[0];
+const tokenLink =
+  "https://github.com/settings/personal-access-tokens/new?" +
+  new URLSearchParams({
+    name: `gitmarks ${new Date().toISOString().slice(0, 10)}`,
+    description: `Lets gitmarks save bookmarks to ${repo ?? "its repo"}. Contents only.`,
+    ...(owner ? { target_name: owner } : {}),
+    expires_in: "366",
+    contents: "write",
+  });
 ---
 
 <div class="mx-auto flex min-h-dvh max-w-[600px] flex-col justify-center px-5 py-16">
-  <p class="font-mono text-xs uppercase tracking-[0.14em] text-ink-muted">gitmarks setup</p>
-  {step === "public" ? (
+  <p class={label}>gitmarks setup</p>
+  {publicRepo ? (
     <>
       <h1 class="mt-2 font-display text-3xl font-semibold tracking-[-0.03em]">Your repo is public</h1>
       <p class="mt-3 text-[15px] leading-relaxed text-ink-muted">
-        Your bookmarks are committed to <code class={code}>{repo}</code>, and anyone can read that repo.
+        Your bookmarks are committed to <code class={code}>{publicRepo}</code>, and anyone can read that repo.
         Saving is paused until it is private.
       </p>
       <ol class="mt-6 list-decimal space-y-2.5 pl-5 text-[15px] leading-relaxed">
         <li>
-          On GitHub, open <code class={code}>{repo}</code> → Settings → scroll to the Danger Zone → Change
-          visibility → Make private.
+          On GitHub, open{" "}
+          <a
+            class="underline underline-offset-2"
+            href={`https://github.com/${publicRepo}/settings`}
+            target="_blank"
+            rel="noopener noreferrer"
+          >
+            {publicRepo} → Settings
+          </a>
+          , scroll to the Danger Zone, then Change visibility → Make private.
         </li>
         <li>If anything was already saved, it is in the repo's history. Treat those links as published.</li>
         <li>Reload this page. (The check is cached for up to ten minutes.)</li>
       </ol>
-      <p class="mt-6 text-[13px] text-ink-muted">
-        Want a public collection on purpose? Set <code class={code}>GITMARKS_ALLOW_PUBLIC=true</code>.
-      </p>
-    </>
-  ) : step === "secret" ? (
-    <>
-      <h1 class="mt-2 font-display text-3xl font-semibold tracking-[-0.03em]">Add your secret</h1>
-      <p class="mt-3 text-[15px] leading-relaxed text-ink-muted">
-        <code class={code}>GITMARKS_SECRET</code> is missing or shorter than {MIN_SECRET_LENGTH} characters.
-        It is your password, your phone and extension token, and the key that signs your session, so it has to
-        be long and random.
-      </p>
-      <ol class="mt-6 list-decimal space-y-2.5 pl-5 text-[15px] leading-relaxed">
-        <li>
-          Generate one: a password manager's generator at 32+ characters, or{" "}
-          <code class={code}>pnpm secret</code>.
-        </li>
-        <li>
-          Vercel → your project → Settings → Environment Variables → add{" "}
-          <code class={code}>GITMARKS_SECRET</code>.
-        </li>
-        <li>Deployments → ⋯ on the latest → Redeploy. Then reload this page.</li>
-      </ol>
+      {!hosted && (
+        <p class="mt-6 text-[13px] text-ink-muted">
+          Want a public collection on purpose? Set <code class={code}>GITMARKS_ALLOW_PUBLIC=true</code>.
+        </p>
+      )}
     </>
   ) : (
     <>
-      <h1 class="mt-2 font-display text-3xl font-semibold tracking-[-0.03em]">Connect your repo</h1>
+      <h1 class="mt-2 font-display text-3xl font-semibold tracking-[-0.03em]">
+        {missing?.secret && missing.github
+          ? "Two settings, then you're done"
+          : "One setting, then you're done"}
+      </h1>
       <p class="mt-3 text-[15px] leading-relaxed text-ink-muted">
-        Bookmarks are saved as commits to <code class={code}>{repo ?? "your repo"}</code>. That needs a GitHub
-        token that can write to it — and nothing else.
+        Add {missing?.secret && missing.github ? "both" : "it"} in Vercel at once: your project → Settings →
+        Environment Variables.
       </p>
-      <ol class="mt-6 list-decimal space-y-2.5 pl-5 text-[15px] leading-relaxed">
-        <li>
-          Open{" "}
-          <a
-            class="underline underline-offset-2"
-            href="https://github.com/settings/personal-access-tokens/new"
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            GitHub → new fine-grained token
-          </a>
-          .
-        </li>
-        <li>
-          Repository access: <strong>Only select repositories</strong> →{" "}
-          <code class={code}>{repo ?? "your gitmarks repo"}</code>.
-        </li>
-        <li>
-          Permissions → Repository → <strong>Contents: Read and write</strong>. Generate, and copy it.
-        </li>
-        <li>
-          Vercel → your project → Settings → Environment Variables → add{" "}
-          <code class={code}>GITHUB_TOKEN</code>.
-        </li>
-        <li>Deployments → ⋯ on the latest → Redeploy. Then reload this page.</li>
-      </ol>
+
+      <div class="mt-6 space-y-3">
+        {missing?.secret && (
+          <div class={card}>
+            <p class={label}>Name</p>
+            <p class="mt-1 font-mono text-[15px]">GITMARKS_SECRET</p>
+            <p class={`${label} mt-4`}>Value: made for you</p>
+            <button
+              type="button"
+              data-copy={generated}
+              class="mt-1.5 flex w-full cursor-pointer items-center justify-between gap-3 rounded-xl border border-line-strong bg-surface px-4 py-3 text-left font-mono text-[13px]"
+            >
+              <span class="truncate">{generated}</span>
+              <span class="shrink-0 text-ink-muted" data-copy-label>
+                Copy
+              </span>
+            </button>
+            <p class="mt-3 text-[14px] leading-relaxed text-ink-muted">
+              It's your password for this page, so keep a copy in your password manager too.
+            </p>
+          </div>
+        )}
+        {missing?.github && (
+          <div class={card}>
+            <p class={label}>Name</p>
+            <p class="mt-1 font-mono text-[15px]">GITHUB_TOKEN</p>
+            <p class={`${label} mt-4`}>Value: a token GitHub makes</p>
+            <a
+              href={tokenLink}
+              target="_blank"
+              rel="noopener noreferrer"
+              class="mt-1.5 inline-flex h-11 items-center rounded-xl bg-ink px-4 text-[14px] font-medium text-surface"
+            >
+              Create the token on GitHub ↗
+            </a>
+            <p class="mt-3 text-[14px] leading-relaxed text-ink-muted">
+              Everything is filled in except one choice: under{" "}
+              <strong class="text-ink">Repository access</strong>, pick{" "}
+              <strong class="text-ink">Only select repositories</strong> →{" "}
+              <code class={code}>{repo ?? "your gitmarks repo"}</code>. Then Generate token, and copy it.
+            </p>
+          </div>
+        )}
+        <div class={card}>
+          <p class={label}>Last step</p>
+          <p class="mt-1 text-[15px] leading-relaxed">
+            In Vercel, open <strong>Deployments</strong>, click <strong>⋯</strong> on the latest, then{" "}
+            <strong>Redeploy</strong>. When it finishes, reload this page.
+          </p>
+        </div>
+      </div>
     </>
   )}
 </div>
+
+<script is:inline>
+  for (const button of document.querySelectorAll("[data-copy]")) {
+    button.addEventListener("click", async () => {
+      await navigator.clipboard.writeText(button.dataset.copy);
+      button.querySelector("[data-copy-label]").textContent = "Copied";
+    });
+  }
+</script>

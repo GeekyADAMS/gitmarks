@@ -7,8 +7,11 @@ import {
   recordFailure,
   sessionCookie,
 } from "@/lib/auth";
+import { isHosted } from "@/lib/hosted";
 
+/** Self-hosted only. Hosted, there is no shared password: people sign in with GitHub. */
 export const POST: APIRoute = async ({ request, cookies, clientAddress, url }) => {
+  if (isHosted()) return new Response("Not found", { status: 404 });
   const key = clientAddress ?? "unknown";
   if (isThrottled(key)) {
     return Response.json({ ok: false, error: "Too many attempts. Try again later." }, { status: 429 });
