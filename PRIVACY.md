@@ -1,16 +1,16 @@
 # Privacy
 
-This covers **gitmarks.app**, the hosted gitmarks. If you
+This covers **gitmarks.a9m.pro**, the hosted gitmarks. If you
 [host gitmarks yourself](README.md#host-it-yourself), your copy talks to GitHub and
 to the sites you save, and to nobody else (see [SECURITY.md](SECURITY.md#third-parties-your-deployment-talks-to)).
 
 ## The short version
 
-Your bookmarks live in a private GitHub repo that you own. gitmarks.app has no
+Your bookmarks live in a private GitHub repo that you own. gitmarks.a9m.pro has no
 database and keeps no copy of them. It can open only the one repo you chose when
 you connected it, and only that repo's files.
 
-## What gitmarks.app can see
+## What gitmarks.a9m.pro can see
 
 - **Your GitHub user ID**, once, when you sign in, to check which installation and
   repo are yours. It is written into your sign-in cookie, not stored anywhere else.

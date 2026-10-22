@@ -8,7 +8,7 @@ Include what an attacker needs, what they get, and steps to reproduce. You'll ge
 acknowledgement within 72 hours and a fix or a plan within 14 days. Credit is given in
 the advisory unless you'd rather not have it.
 
-Only the latest commit on `main` is supported. gitmarks.app runs `main`. A
+Only the latest commit on `main` is supported. gitmarks.a9m.pro runs `main`. A
 self-hosted deployment belongs to the person who deployed it, so fixes reach it when
 they pull from upstream.
 
@@ -20,7 +20,7 @@ gitmarks runs two ways, and the model differs only in who signs in.
 `GITHUB_TOKEN`. Who's trusted: whoever holds the secret. There is exactly one user
 per deployment.
 
-**Hosted** (gitmarks.app, or anyone running with `GITHUB_APP_*` set). What's
+**Hosted** (gitmarks.a9m.pro, or anyone running with `GITHUB_APP_*` set). What's
 protected: every user's bookmarks from every other user, and from anyone else.
 Who's trusted: GitHub, to say who signed in and which installation is theirs, and
 the operator, who holds the app's private key and so could mint a token for any

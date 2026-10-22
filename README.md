@@ -7,7 +7,7 @@
 </p>
 
 <p align="center">
-  <a href="https://gitmarks.app"><strong>Start free at gitmarks.app →</strong></a>
+  <a href="https://gitmarks.a9m.pro"><strong>Start free at gitmarks.a9m.pro →</strong></a>
   &nbsp;·&nbsp;
   <a href="#host-it-yourself">or host it yourself</a>
 </p>
@@ -60,13 +60,13 @@ export come free from git.
 
 ## Get started
 
-**At [gitmarks.app](https://gitmarks.app)**, free, in about a minute:
+**At [gitmarks.a9m.pro](https://gitmarks.a9m.pro)**, free, in about a minute:
 
 1. **Make a private repo** for your bookmarks. The button on the page fills in GitHub's form for you.
 2. **Connect it.** GitHub asks which repos gitmarks may use: choose **Only select repositories** and pick that one. You land back on gitmarks, signed in.
 3. **Connect your devices.** Click **Connect** and copy your key into the extension or the iPhone Shortcut. Android and the bookmarks-bar button need no key.
 
-There's no gitmarks account, and gitmarks.app keeps no database. It can open only
+There's no gitmarks account, and gitmarks.a9m.pro keeps no database. It can open only
 the one repo you picked, and only its files. See [PRIVACY.md](PRIVACY.md) for exactly
 what it sees. To leave, uninstall the app on GitHub: your bookmarks stay in your
 repo as one JSON file.
@@ -115,7 +115,7 @@ Self-hosted:
 | `GITMARKS_BRANCH`       | no        | Defaults to the deployed branch, then `main`            |
 | `GITMARKS_ALLOW_PUBLIC` | no        | `true` to keep saving to a public repo on purpose       |
 
-Hosted mode, for running a gitmarks that serves everyone, like gitmarks.app. Setting
+Hosted mode, for running a gitmarks that serves everyone, like gitmarks.a9m.pro. Setting
 all four `GITHUB_APP_*` values switches it on. `node scripts/create-github-app.mjs
 https://your-domain` registers the app in one click and writes them for you.
 

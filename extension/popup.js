@@ -1,6 +1,6 @@
 const $ = (id) => document.getElementById(id);
 // Where most people's gitmarks lives. Self-hosters change it in settings.
-const HOSTED = "https://gitmarks.app";
+const HOSTED = "https://gitmarks.a9m.pro";
 const send = (message) => chrome.runtime.sendMessage(message);
 
 // Same colour per category as the web page, so a name looks the same in both.

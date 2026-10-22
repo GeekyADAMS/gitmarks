@@ -20,7 +20,7 @@ that you own. There's no gitmarks account and no database.
 • On X, a save button sits in every post, beside like and repost
 
 To connect, open gitmarks, click Connect, copy your key, and paste it into the
-extension. Works with gitmarks.app or your own self-hosted copy.
+extension. Works with gitmarks.a9m.pro or your own self-hosted copy.
 
 Free and open source: https://github.com/GeekyADAMS/gitmarks
 

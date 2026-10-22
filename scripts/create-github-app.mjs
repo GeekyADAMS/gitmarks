@@ -2,7 +2,7 @@
 // click, using GitHub's manifest flow. Only whoever runs a hosted gitmarks
 // needs this; self-hosting does not.
 //
-//   node scripts/create-github-app.mjs https://gitmarks.app [app-name]
+//   node scripts/create-github-app.mjs https://gitmarks.a9m.pro [app-name]
 //
 // It opens GitHub with every setting filled in. Click "Create GitHub App" and
 // the four values hosted mode needs are written to .env.github-app (readable
