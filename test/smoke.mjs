@@ -167,7 +167,7 @@ console.log("configured");
     const text = encodeURIComponent("check this https://example.com/post");
     const html = await (await fetch(`${base}/share?text=${text}`, { headers: { cookie } })).text();
     assert.match(html, /Tap a category/);
-    assert.match(html, /example\.com\/post/);
+    assert.ok(html.includes("https://example.com/post"), "shared link missing from the page");
     assert.match(await (await fetch(`${base}/share?text=words`, { headers: { cookie } })).text(), /No link/);
   });
 
