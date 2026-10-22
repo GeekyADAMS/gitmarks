@@ -53,14 +53,13 @@ const server = createServer(async (req, res) => {
   }
   if (url.pathname !== "/done") return res.writeHead(404).end();
   if (url.searchParams.get("state") !== state) return res.writeHead(400).end("State mismatch. Start again.");
+  const code = url.searchParams.get("code") ?? "";
+  if (!/^[\w-]{1,100}$/.test(code)) return res.writeHead(400).end("GitHub sent no code. Start again.");
 
-  const conversion = await fetch(
-    `https://api.github.com/app-manifests/${url.searchParams.get("code")}/conversions`,
-    {
-      method: "POST",
-      headers: { accept: "application/vnd.github+json" },
-    },
-  );
+  const conversion = await fetch(`https://api.github.com/app-manifests/${code}/conversions`, {
+    method: "POST",
+    headers: { accept: "application/vnd.github+json" },
+  });
   if (!conversion.ok) {
     res.writeHead(502).end(`GitHub said ${conversion.status}. Start again.`);
     return finish(1);

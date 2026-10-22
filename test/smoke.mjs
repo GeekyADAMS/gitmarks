@@ -330,7 +330,8 @@ console.log("hosted");
     assert.equal(result.cookie, undefined);
     const html = await (await fetch(`${base}${result.location}`)).text();
     assert.match(html, /more than one of your repos/);
-    assert.ok(html.includes("https://github.com/settings/installations/99"));
+    const fix = /<a href="([^"]+)"[^>]*>\s*Fix it on GitHub/.exec(html)?.[1];
+    assert.equal(fix, "https://github.com/settings/installations/99");
   });
 
   await check("an installation on someone else's account does not count", async () => {
