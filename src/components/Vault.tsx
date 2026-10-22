@@ -1094,7 +1094,7 @@ function Empty({ view, searching, hasAny }: { view: View; searching: boolean; ha
 
 // --- Connecting devices -------------------------------------------------------
 
-const SHORTCUT_LINK = "https://github.com/GeekyADAMS/gitmarks/tree/main/shortcut#readme";
+const SHORTCUT_LINK = "https://github.com/GeekyADAMS/gitmarks/tree/main/shortcut#install-it-two-minutes";
 const EXTENSION_LINK = "https://github.com/GeekyADAMS/gitmarks/tree/main/extension#readme";
 
 /** How to save from everywhere else, with this deployment's address ready to copy. */
