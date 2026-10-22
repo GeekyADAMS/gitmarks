@@ -1,0 +1,44 @@
+---
+import Shell from "@/components/Shell.astro";
+import Setup from "@/components/Setup.astro";
+import Login from "@/components/Login";
+import Share from "@/components/Share";
+import { SESSION_COOKIE, checkSession, secret } from "@/lib/auth";
+import { loadVault } from "@/lib/server";
+import { extractUrls } from "@/lib/vault";
+
+/**
+ * Android's share target (see public/manifest.webmanifest). Apps disagree on
+ * where the link goes — some send `url`, many put it inside `text` — so both
+ * are searched for the first link.
+ */
+Astro.response.headers.set("Cache-Control", "private, no-store");
+
+const params = Astro.url.searchParams;
+const url = extractUrls(`${params.get("url") ?? ""} ${params.get("text") ?? ""}`)[0];
+const title = (params.get("title") ?? "").trim();
+
+const configured = Boolean(secret());
+const authed = configured && checkSession(Astro.cookies.get(SESSION_COOKIE)?.value);
+const categories = authed && url ? ((await loadVault().catch(() => null))?.vault.categories ?? []) : [];
+---
+
+<Shell title="Save · gitmarks">
+  {!configured ? (
+    <Setup step="secret" />
+  ) : !authed ? (
+    <Login client:load />
+  ) : !url ? (
+    <div class="flex min-h-dvh flex-col items-center justify-center px-6 text-center">
+      <p class="font-display text-2xl font-semibold tracking-tight">No link in that share.</p>
+      <p class="mt-2 text-[14px] text-ink-muted">
+        gitmarks saves links. Try sharing the page or post itself.
+      </p>
+      <a href="/" class="mt-6 rounded-xl bg-ink px-4 py-2 text-[14px] font-medium text-surface">
+        Open gitmarks
+      </a>
+    </div>
+  ) : (
+    <Share client:load url={url} title={title} categories={categories} />
+  )}
+</Shell>

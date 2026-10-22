@@ -1,0 +1,28 @@
+import js from "@eslint/js";
+import tseslint from "typescript-eslint";
+import reactHooks from "eslint-plugin-react-hooks";
+import jsxA11y from "eslint-plugin-jsx-a11y";
+import globals from "globals";
+
+export default tseslint.config(
+  { ignores: ["dist/**", ".astro/**", ".vercel/**", "node_modules/**"] },
+  js.configs.recommended,
+  ...tseslint.configs.recommended,
+  {
+    files: ["src/**/*.{ts,tsx}"],
+    plugins: { "react-hooks": reactHooks, "jsx-a11y": jsxA11y },
+    languageOptions: { globals: { ...globals.browser, ...globals.node } },
+    rules: {
+      ...reactHooks.configs.recommended.rules,
+      ...jsxA11y.flatConfigs.recommended.rules,
+    },
+  },
+  {
+    files: ["extension/**/*.js"],
+    languageOptions: { globals: { ...globals.browser, ...globals.webextensions } },
+  },
+  {
+    files: ["test/**/*.mjs", "*.config.{js,mjs}"],
+    languageOptions: { globals: globals.node },
+  },
+);

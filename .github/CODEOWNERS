@@ -1,0 +1,10 @@
+# Every change needs a maintainer's review. The files below decide who gets in
+# and what the server will fetch, so changes to them get the closest reading.
+*                          @GeekyADAMS
+/src/lib/auth.ts           @GeekyADAMS
+/src/lib/net.ts            @GeekyADAMS
+/src/lib/github.ts         @GeekyADAMS
+/src/middleware.ts         @GeekyADAMS
+/src/pages/api/            @GeekyADAMS
+/extension/manifest.json   @GeekyADAMS
+/.github/                  @GeekyADAMS

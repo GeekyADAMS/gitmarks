@@ -1,0 +1,5 @@
+dist
+.astro
+.vercel
+pnpm-lock.yaml
+data/vault.json

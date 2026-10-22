@@ -1,0 +1,79 @@
+{
+  "name": "gitmarks",
+  "version": "1.0.0",
+  "description": "Private, categorised bookmarks stored in your own GitHub repo. Save from the web, a browser extension, the X timeline, and the iPhone and Android share sheets.",
+  "license": "MIT",
+  "type": "module",
+  "private": true,
+  "scripts": {
+    "dev": "sh -c 'if [ -f .env ]; then set -a; . ./.env; set +a; fi; astro dev'",
+    "build": "astro build",
+    "preview": "sh -c 'if [ -f .env ]; then set -a; . ./.env; set +a; fi; astro preview'",
+    "check": "astro check",
+    "test": "vitest run",
+    "secret": "node -e \"console.log(require('crypto').randomBytes(32).toString('base64url'))\"",
+    "lint": "eslint .",
+    "format": "prettier --write .",
+    "format:check": "prettier --check .",
+    "smoke": "node test/smoke.mjs",
+    "verify": "pnpm format:check && pnpm lint && pnpm check && pnpm test && pnpm build && pnpm smoke"
+  },
+  "dependencies": {
+    "@astrojs/node": "^11.1.9",
+    "@astrojs/react": "^7.1.1",
+    "@astrojs/vercel": "^11.0.16",
+    "@fontsource-variable/bricolage-grotesque": "^5.3.0",
+    "@phosphor-icons/react": "^2.1.10",
+    "@tailwindcss/vite": "^4.3.3",
+    "astro": "^7.4.2",
+    "cheerio": "^1.2.0",
+    "react": "^19.3.1",
+    "react-dom": "^19.3.1",
+    "tailwindcss": "^4.3.3"
+  },
+  "devDependencies": {
+    "@astrojs/check": "^0.9.12",
+    "@eslint/js": "^10.0.1",
+    "@types/node": "^26.6.5",
+    "@types/react": "^19.3.0",
+    "@types/react-dom": "^19.3.0",
+    "eslint": "^10.13.0",
+    "eslint-plugin-jsx-a11y": "^6.10.2",
+    "eslint-plugin-react-hooks": "^7.1.1",
+    "globals": "^17.13.0",
+    "prettier": "^3.9.10",
+    "prettier-plugin-astro": "^1.1.1",
+    "typescript": "~6.0.3",
+    "typescript-eslint": "^8.72.0",
+    "vitest": "^5.0.5"
+  },
+  "engines": {
+    "node": ">=22"
+  },
+  "packageManager": "pnpm@10.7.0",
+  "pnpm": {
+    "onlyBuiltDependencies": [
+      "esbuild",
+      "sharp"
+    ],
+    "overrides": {
+      "esbuild": "^0.28.1"
+    }
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/GeekyADAMS/gitmarks.git"
+  },
+  "keywords": [
+    "bookmarks",
+    "git",
+    "github",
+    "astro",
+    "vercel",
+    "self-hosted",
+    "x",
+    "twitter",
+    "ios-shortcuts",
+    "pwa"
+  ]
+}

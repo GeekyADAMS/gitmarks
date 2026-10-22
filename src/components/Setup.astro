@@ -1,0 +1,93 @@
+---
+import { MIN_SECRET_LENGTH } from "@/lib/auth";
+
+/**
+ * Shown until the deployment can actually work. The Deploy button creates the
+ * repo, so a token scoped to it can only be made afterwards — this page names
+ * the repo, so that step needs no guessing.
+ */
+interface Props {
+  step: "secret" | "github" | "public";
+  repo?: string;
+}
+const { step, repo } = Astro.props;
+const code = "rounded bg-surface-raised px-1.5 py-0.5 font-mono text-[13px] text-ink border border-line";
+---
+
+<div class="mx-auto flex min-h-dvh max-w-[600px] flex-col justify-center px-5 py-16">
+  <p class="font-mono text-xs uppercase tracking-[0.14em] text-ink-muted">gitmarks setup</p>
+  {step === "public" ? (
+    <>
+      <h1 class="mt-2 font-display text-3xl font-semibold tracking-[-0.03em]">Your repo is public</h1>
+      <p class="mt-3 text-[15px] leading-relaxed text-ink-muted">
+        Your bookmarks are committed to <code class={code}>{repo}</code>, and anyone can read that repo.
+        Saving is paused until it is private.
+      </p>
+      <ol class="mt-6 list-decimal space-y-2.5 pl-5 text-[15px] leading-relaxed">
+        <li>
+          On GitHub, open <code class={code}>{repo}</code> → Settings → scroll to the Danger Zone → Change
+          visibility → Make private.
+        </li>
+        <li>If anything was already saved, it is in the repo's history. Treat those links as published.</li>
+        <li>Reload this page. (The check is cached for up to ten minutes.)</li>
+      </ol>
+      <p class="mt-6 text-[13px] text-ink-muted">
+        Want a public collection on purpose? Set <code class={code}>GITMARKS_ALLOW_PUBLIC=true</code>.
+      </p>
+    </>
+  ) : step === "secret" ? (
+    <>
+      <h1 class="mt-2 font-display text-3xl font-semibold tracking-[-0.03em]">Add your secret</h1>
+      <p class="mt-3 text-[15px] leading-relaxed text-ink-muted">
+        <code class={code}>GITMARKS_SECRET</code> is missing or shorter than {MIN_SECRET_LENGTH} characters.
+        It is your password, your phone and extension token, and the key that signs your session, so it has to
+        be long and random.
+      </p>
+      <ol class="mt-6 list-decimal space-y-2.5 pl-5 text-[15px] leading-relaxed">
+        <li>
+          Generate one: a password manager's generator at 32+ characters, or{" "}
+          <code class={code}>pnpm secret</code>.
+        </li>
+        <li>
+          Vercel → your project → Settings → Environment Variables → add{" "}
+          <code class={code}>GITMARKS_SECRET</code>.
+        </li>
+        <li>Deployments → ⋯ on the latest → Redeploy. Then reload this page.</li>
+      </ol>
+    </>
+  ) : (
+    <>
+      <h1 class="mt-2 font-display text-3xl font-semibold tracking-[-0.03em]">Connect your repo</h1>
+      <p class="mt-3 text-[15px] leading-relaxed text-ink-muted">
+        Bookmarks are saved as commits to <code class={code}>{repo ?? "your repo"}</code>. That needs a GitHub
+        token that can write to it — and nothing else.
+      </p>
+      <ol class="mt-6 list-decimal space-y-2.5 pl-5 text-[15px] leading-relaxed">
+        <li>
+          Open{" "}
+          <a
+            class="underline underline-offset-2"
+            href="https://github.com/settings/personal-access-tokens/new"
+            target="_blank"
+            rel="noopener noreferrer"
+          >
+            GitHub → new fine-grained token
+          </a>
+          .
+        </li>
+        <li>
+          Repository access: <strong>Only select repositories</strong> →{" "}
+          <code class={code}>{repo ?? "your gitmarks repo"}</code>.
+        </li>
+        <li>
+          Permissions → Repository → <strong>Contents: Read and write</strong>. Generate, and copy it.
+        </li>
+        <li>
+          Vercel → your project → Settings → Environment Variables → add{" "}
+          <code class={code}>GITHUB_TOKEN</code>.
+        </li>
+        <li>Deployments → ⋯ on the latest → Redeploy. Then reload this page.</li>
+      </ol>
+    </>
+  )}
+</div>
