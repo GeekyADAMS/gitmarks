@@ -1,0 +1,74 @@
+@import "tailwindcss";
+@custom-variant dark (&:where(.dark, .dark *));
+
+/* Two layers: these semantic tokens, declared once per theme, and the
+   utilities Tailwind builds from them below. Components use only the
+   utilities (`bg-surface`, `text-ink`, `border-line`), so switching the theme
+   is redefining variables — no component ever needs a `dark:` variant. */
+:root {
+  --surface: #fdfbf7; /* page canvas */
+  --surface-raised: #ffffff; /* cards and controls on the canvas */
+  --surface-overlay: #ffffff; /* floating: the toast */
+  --surface-sunken: #f4f1eb; /* recessed fills */
+  --ink: #171717;
+  --ink-muted: #737373; /* 4.59:1 on --surface: AA, with almost no margin */
+  --line: #e5e5e5;
+  --line-strong: #d4d4d4;
+  --focus-ring: #737373;
+  /* The one accent, rationed: search matches. Only --signal-ink sits on it. */
+  --signal: oklch(87.055% 0.16841 104.19);
+  --signal-ink: #171717;
+}
+
+.dark {
+  --surface: #151515;
+  --surface-raised: #252424;
+  --surface-overlay: #1c1c1f;
+  --surface-sunken: #121214;
+  --ink: #d4d4d4;
+  --ink-muted: #a3a3a3;
+  --line: #2b2c2c;
+  --line-strong: #3a3b3b;
+  --focus-ring: #a3a3a3;
+  --signal: oklch(89.482% 0.14852 104.19);
+}
+
+@theme inline {
+  --color-surface: var(--surface);
+  --color-surface-raised: var(--surface-raised);
+  --color-surface-overlay: var(--surface-overlay);
+  --color-surface-sunken: var(--surface-sunken);
+  --color-ink: var(--ink);
+  --color-ink-muted: var(--ink-muted);
+  --color-line: var(--line);
+  --color-line-strong: var(--line-strong);
+  --color-signal: var(--signal);
+  --color-signal-ink: var(--signal-ink);
+  --font-display: "Bricolage Grotesque Variable", "SF Pro Display", system-ui, sans-serif;
+}
+
+html {
+  font-size: 90%;
+  font-family:
+    "SF Pro Display",
+    "SF Pro Text",
+    -apple-system,
+    BlinkMacSystemFont,
+    "Segoe UI",
+    Roboto,
+    "Helvetica Neue",
+    Arial,
+    system-ui,
+    sans-serif;
+  -webkit-font-smoothing: antialiased;
+}
+
+.font-display {
+  letter-spacing: -0.01em;
+}
+
+/* The only focus rule. Never suppress it per component; change the token. */
+:focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: 2px;
+}

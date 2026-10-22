@@ -1,0 +1,49 @@
+---
+import Shell from "@/components/Shell.astro";
+import Setup from "@/components/Setup.astro";
+import Login from "@/components/Login";
+import Vault from "@/components/Vault";
+import { SESSION_COOKIE, checkSession, secret } from "@/lib/auth";
+import { loadVault, publicRepoProblem } from "@/lib/server";
+import { githubConfig } from "@/lib/github";
+import { env } from "@/lib/env";
+import { EMPTY_VAULT } from "@/lib/vault";
+
+Astro.response.headers.set("Cache-Control", "private, no-store");
+
+// On Vercel there is no disk, so without a token there is nowhere to save.
+const repo =
+  env("GITMARKS_REPO") ??
+  (env("VERCEL_GIT_REPO_OWNER")
+    ? `${env("VERCEL_GIT_REPO_OWNER")}/${env("VERCEL_GIT_REPO_SLUG")}`
+    : undefined);
+const setup = !secret()
+  ? "secret"
+  : process.env.VERCEL && !githubConfig()
+    ? "github"
+    : (await publicRepoProblem().catch(() => null))
+      ? "public"
+      : null;
+const configured = setup === null;
+const authed = configured && checkSession(Astro.cookies.get(SESSION_COOKIE)?.value);
+
+let initial = EMPTY_VAULT;
+let error = "";
+if (authed) {
+  try {
+    initial = (await loadVault()).vault;
+  } catch (e) {
+    error = e instanceof Error ? e.message : "Could not load your bookmarks.";
+  }
+}
+---
+
+<Shell title="gitmarks">
+  {setup ? (
+    <Setup step={setup} repo={repo} />
+  ) : authed ? (
+    <Vault client:load initial={initial} loadError={error} />
+  ) : (
+    <Login client:load />
+  )}
+</Shell>

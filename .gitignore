@@ -1,0 +1,7 @@
+node_modules/
+dist/
+.astro/
+.vercel/
+.env
+# Your bookmarks when running locally without GITHUB_TOKEN.
+.gitmarks-local.json

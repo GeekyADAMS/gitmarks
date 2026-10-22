@@ -1,0 +1,39 @@
+name: Bug report
+description: Something does not work as documented.
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: Security issue? Stop here and use the private report link instead.
+  - type: dropdown
+    id: where
+    attributes:
+      label: Where
+      options: [Web page, Browser extension, iPhone Shortcut, Android, Setup / deploy, API]
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      placeholder: "1. …\n2. …"
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected and actual
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: Commit or version
+      placeholder: e.g. 1.0.0 or a1b2c3d
+    validations:
+      required: true
+  - type: textarea
+    id: env
+    attributes:
+      label: Environment
+      description: Browser and version, iOS/Android version, hosting (Vercel or other). Never paste your secret or token.

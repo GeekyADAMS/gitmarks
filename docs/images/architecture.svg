@@ -1,0 +1,51 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1080 450" font-family="-apple-system, 'SF Pro Text', 'Segoe UI', Roboto, sans-serif">
+  <title>How gitmarks works: four ways in, one serverless function, one JSON file in your repo</title>
+  <rect width="1080" height="450" rx="24" fill="#fdfbf7"/>
+  <style>
+    .card{fill:#fff;stroke:#e5e5e5}.t{fill:#171717;font-size:15px;font-weight:600}.m{fill:#6b6b6b;font-size:12.5px}
+    .mono{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:12px;fill:#6b6b6b}.l{stroke:#c9c9c9;stroke-width:1.5;fill:none}
+  </style>
+  <defs><marker id="a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0 0L10 5L0 10z" fill="#b5b5b5"/></marker></defs>
+
+  <!-- clients -->
+  <g>
+    <rect class="card" x="32" y="40" width="236" height="72" rx="14"/><text class="t" x="52" y="70">Web page</text><text class="m" x="52" y="92">paste · drag · search</text>
+    <rect class="card" x="32" y="128" width="236" height="72" rx="14"/><text class="t" x="52" y="158">Browser extension</text><text class="m" x="52" y="180">toolbar · right-click · X</text>
+    <rect class="card" x="32" y="216" width="236" height="72" rx="14"/><text class="t" x="52" y="246">iPhone Shortcut</text><text class="m" x="52" y="268">Share sheet, any app</text>
+    <rect class="card" x="32" y="304" width="236" height="72" rx="14"/><text class="t" x="52" y="334">Android</text><text class="m" x="52" y="356">installed web app, share target</text>
+  </g>
+  <path class="l" marker-end="url(#a)" d="M268 76 C330 76 330 208 386 208"/>
+  <path class="l" marker-end="url(#a)" d="M268 164 C330 164 330 208 386 208"/>
+  <path class="l" marker-end="url(#a)" d="M268 252 C330 252 330 208 386 208"/>
+  <path class="l" marker-end="url(#a)" d="M268 340 C330 340 330 208 386 208"/>
+  <text class="mono" x="32" y="410">page: session cookie</text>
+  <text class="mono" x="32" y="428">everything else: Bearer secret</text>
+
+  <!-- function -->
+  <rect x="388" y="120" width="320" height="176" rx="16" fill="#171717"/>
+  <text x="410" y="152" fill="#fdfbf7" font-size="15" font-weight="600">/api/vault</text>
+  <text x="410" y="172" fill="#a3a3a3" font-size="12.5">serverless function on Vercel</text>
+  <g fill="#d4d4d4" font-size="12.5">
+    <text x="410" y="204">· anyone else gets a 404</text>
+    <text x="410" y="224">· validates the request</text>
+    <text x="410" y="244">· fetches the preview (public IPs only)</text>
+    <text x="410" y="264">· applies the same reducer the page runs</text>
+  </g>
+  <circle cx="686" cy="140" r="6" fill="oklch(87% 0.168 104)"/>
+
+  <!-- github -->
+  <path class="l" marker-end="url(#a)" d="M708 208 L806 208"/>
+  <text class="mono" x="720" y="196">PUT + sha</text>
+  <text class="mono" x="720" y="232">409 → retry</text>
+  <rect class="card" x="808" y="120" width="244" height="176" rx="16"/>
+  <text class="t" x="830" y="152">Your private repo</text>
+  <text class="mono" x="830" y="176">data/vault.json</text>
+  <g class="m">
+    <text x="830" y="208">· every save is a commit</text>
+    <text x="830" y="228">· history, diff, rollback, export</text>
+    <text x="830" y="248">· data-only commits skip</text>
+    <text x="842" y="266">the Vercel rebuild</text>
+  </g>
+  <text class="m" x="388" y="330">Optimistic: the page shows each change at once with the</text>
+  <text class="m" x="388" y="348">same reducer, then settles on the server's answer.</text>
+</svg>

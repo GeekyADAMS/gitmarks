@@ -1,0 +1,208 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <style>
+      :root {
+        --surface: #fdfbf7;
+        --raised: #fff;
+        --ink: #171717;
+        --muted: #737373;
+        --line: #e5e5e5;
+        --strong: #d4d4d4;
+        color-scheme: light dark;
+      }
+      @media (prefers-color-scheme: dark) {
+        :root {
+          --surface: #151515;
+          --raised: #252424;
+          --ink: #d4d4d4;
+          --muted: #a3a3a3;
+          --line: #2b2c2c;
+          --strong: #3a3b3b;
+        }
+      }
+      * {
+        box-sizing: border-box;
+      }
+      body {
+        margin: 0;
+        width: 360px;
+        padding: 14px;
+        background: var(--surface);
+        color: var(--ink);
+        font:
+          13px/1.45 -apple-system,
+          BlinkMacSystemFont,
+          "SF Pro Text",
+          system-ui,
+          sans-serif;
+      }
+      .label {
+        font:
+          11px ui-monospace,
+          SFMono-Regular,
+          Menlo,
+          monospace;
+        text-transform: uppercase;
+        letter-spacing: 0.14em;
+        color: var(--muted);
+      }
+      header {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        margin-bottom: 12px;
+      }
+      .page {
+        display: flex;
+        gap: 10px;
+        align-items: center;
+        padding: 10px;
+        border: 1px solid var(--line);
+        border-radius: 14px;
+        background: var(--raised);
+      }
+      .page img {
+        width: 20px;
+        height: 20px;
+        border-radius: 5px;
+        flex: none;
+      }
+      .page div {
+        min-width: 0;
+      }
+      .page strong,
+      .page span {
+        display: block;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+      .page strong {
+        font-weight: 600;
+      }
+      .page span {
+        color: var(--muted);
+        font-size: 12px;
+      }
+      .chips {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 6px;
+        margin: 12px 0;
+      }
+      .chip,
+      button,
+      input,
+      textarea {
+        font: inherit;
+        color: inherit;
+      }
+      .chip {
+        display: inline-flex;
+        align-items: center;
+        gap: 6px;
+        height: 28px;
+        padding: 0 10px;
+        border-radius: 9px;
+        border: 1px solid var(--line);
+        background: transparent;
+        cursor: pointer;
+      }
+      .chip[aria-pressed="true"] {
+        background: var(--raised);
+        border-color: var(--strong);
+        font-weight: 600;
+        box-shadow: 0 1px 2px rgb(0 0 0 / 0.06);
+      }
+      .dot {
+        width: 8px;
+        height: 8px;
+        border-radius: 50%;
+      }
+      textarea,
+      input {
+        width: 100%;
+        padding: 9px 11px;
+        border-radius: 12px;
+        border: 1px solid var(--line);
+        background: var(--raised);
+        resize: none;
+        outline: none;
+      }
+      textarea:focus,
+      input:focus {
+        border-color: var(--strong);
+      }
+      .save {
+        width: 100%;
+        height: 38px;
+        margin-top: 10px;
+        border: 0;
+        border-radius: 12px;
+        background: var(--ink);
+        color: var(--surface);
+        font-weight: 600;
+        cursor: pointer;
+      }
+      .save:disabled {
+        opacity: 0.4;
+        cursor: default;
+      }
+      .ghost {
+        border: 0;
+        background: none;
+        color: var(--muted);
+        cursor: pointer;
+        padding: 4px;
+      }
+      .ghost:hover {
+        color: var(--ink);
+      }
+      .msg {
+        min-height: 18px;
+        margin: 8px 2px 0;
+        color: var(--muted);
+        font-size: 12px;
+      }
+      .msg.error {
+        color: #dc2626;
+      }
+      form#settings {
+        display: grid;
+        gap: 8px;
+      }
+      [hidden] {
+        display: none !important;
+      }
+    </style>
+  </head>
+  <body>
+    <header>
+      <span class="label">gitmarks</span>
+      <button class="ghost" id="toggle-settings" aria-label="Settings" title="Settings">⚙︎</button>
+    </header>
+
+    <section id="save-view">
+      <div class="page">
+        <img id="favicon" alt="" />
+        <div><strong id="title"></strong><span id="url"></span></div>
+      </div>
+      <div class="chips" id="chips" role="group" aria-label="Category"></div>
+      <textarea id="note" rows="2" placeholder="Note (optional)" aria-label="Note"></textarea>
+      <button class="save" id="save">Save <span style="opacity: 0.6; font-weight: 400">↵</span></button>
+    </section>
+
+    <form id="settings" hidden>
+      <label class="label" for="base">Your gitmarks address</label>
+      <input id="base" placeholder="https://your-gitmarks.vercel.app" />
+      <label class="label" for="token">Secret (GITMARKS_SECRET)</label>
+      <input id="token" type="password" autocomplete="off" />
+      <button class="save" type="submit">Save settings</button>
+    </form>
+
+    <p class="msg" id="msg" role="status"></p>
+    <script src="popup.js"></script>
+  </body>
+</html>
