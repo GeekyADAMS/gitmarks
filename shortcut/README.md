@@ -5,10 +5,28 @@ Instagram, Reddit. Tap **Share → Save to gitmarks**, pick a category, done.
 
 ![Share → Save to gitmarks → pick a category → saved](../docs/images/iphone-flow.jpg)
 
-## Build it
+## Install it (two minutes)
 
-It takes about five minutes, once. (A one-tap iCloud install link is on the way.
-Building it yourself also means you can see exactly what it sends.)
+**[Get the Shortcut →](https://www.icloud.com/shortcuts/e1abbf4623e14ebaa4b2dcd4cf62f78f)**
+
+1. Open the link on your iPhone or iPad and tap **Add Shortcut**. It's called **Save to GitMarks**.
+2. In the **Shortcuts** app, long-press **Save to GitMarks** and choose **Edit**.
+3. Replace the placeholders. Each one appears twice, once in each **Get Contents of URL** action:
+
+   | Find                | Replace with                                                             | Where                                                                       |
+   | ------------------- | ------------------------------------------------------------------------ | --------------------------------------------------------------------------- |
+   | `<your-url>`        | your gitmarks address, without `https://`, e.g. `my-gitmarks.vercel.app` | the **URL** of both actions                                                 |
+   | `<your app secret>` | your `GITMARKS_SECRET`                                                   | the **Authorization** header of both actions (tap **›** to see the headers) |
+
+   Keep the word `Bearer` and the space after it, so the header reads `Bearer abc123…`. Keep the `/api/vault` path, and the `?list=categories` on the first URL.
+
+4. Tap **Done**. Then, in any app, tap **Share → Save to GitMarks** and pick a category. The first time, iOS asks whether it may connect to your address: tap **Always Allow**.
+
+It's already set up for the Share sheet, accepts links and text, and saves your clipboard when you run it from the home screen. If something doesn't work, see [Troubleshooting](#troubleshooting).
+
+## Or build it yourself
+
+The same Shortcut from scratch, in about five minutes. Building it yourself also means you know exactly what it sends. The steps below put your address and secret in two variables at the top, so each one appears only once.
 
 Open **Shortcuts**, tap **+**, and name it **Save to gitmarks**. That name is what shows in the Share sheet and on the confirmation notification.
 
@@ -74,6 +92,13 @@ If you publish a fork and want to share a link of your own:
 3. Tap **Share → Copy iCloud Link**.
 
 Before you share, clear your own secret out of the Text action in step 2. iCloud links include the values you leave in.
+
+## Troubleshooting
+
+- **"Your gitmarks rejected that secret" or a 404:** the `Authorization` header must be exactly `Bearer`, one space, then your secret, in **both** actions. Also check the address has no typo and no trailing slash before `/api`.
+- **The category list is empty or shows raw text:** the first action's URL must end in `/api/vault?list=categories`.
+- **"Couldn't connect to server":** open your gitmarks address in Safari to check it's up. iOS also needs that one-time **Always Allow**.
+- **Saved, but in the wrong place:** choosing **Inbox** files the link unsorted. Move it later on the web page.
 
 ## What it sends
 

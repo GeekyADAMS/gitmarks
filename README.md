@@ -38,7 +38,7 @@ export come free from git.
 | ------------------------------- | -------------------------------------------------------------------------------------------------------------------------- |
 | **The web page**                | Press ⌘V anywhere, paste several links at once, or drag links in from other tabs. Drop cards onto categories to sort them. |
 | **Chrome · Arc · Brave · Edge** | A toolbar button (`Alt+Shift+S`), right-click on any link, and a save button on [every post on X](extension/#readme).      |
-| **iPhone · iPad**               | A Shortcut in the Share sheet of every app, with a category picker. → [Set it up](shortcut/#readme)                        |
+| **iPhone · iPad**               | A Shortcut in the Share sheet of every app, with a category picker. → [Install it](shortcut/#install-it-two-minutes)       |
 | **Android**                     | Install the page to your home screen, and gitmarks joins every app's Share menu. One tap on a category saves.              |
 
 <p align="center"><img src="docs/images/android-share.png" width="300" alt="Android share page: the shared link with a grid of categories to tap"></p>
