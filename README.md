@@ -14,7 +14,11 @@
   <a href="LICENSE"><img src="https://img.shields.io/badge/licence-MIT-171717" alt="MIT licence"></a>
 </p>
 
-![gitmarks in dark mode: categories on the left, rich previews of posts, videos and articles in a masonry grid](docs/images/hero.jpg)
+<p align="center">
+  <a href="https://geekyadams.github.io/gitmarks/"><img src="docs/video/preview.webp" alt="15-second intro to gitmarks: scattered links fly into categories, are saved from an iPhone, and land in a git log as commits. Click to watch it with sound."></a>
+  <br>
+  <sub>▶ <a href="https://geekyadams.github.io/gitmarks/"><strong>Watch the 15-second intro with sound</strong></a> · <a href="docs/video/gitmarks-intro.mp4">download the MP4</a></sub>
+</p>
 
 ## Why
 
@@ -23,6 +27,8 @@ apps want an account and keep your data on their servers. gitmarks sorts
 everything, not just X: posts, videos, articles, repos. It keeps all of it as one
 JSON file in a private repo that you own. Version history, diffs, rollback and
 export come free from git.
+
+![gitmarks in dark mode: categories on the left, rich previews of posts, videos and articles in a masonry grid](docs/images/hero.jpg)
 
 ## Save from anywhere
 
