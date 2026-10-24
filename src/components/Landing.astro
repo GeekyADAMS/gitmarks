@@ -1,5 +1,6 @@
 ---
 import { app, installUrl, safePath } from "@/lib/hosted";
+import { EXTENSION_LINK, SHORTCUT_LINK } from "./Vault";
 
 /**
  * The hosted front door. Two steps on GitHub — make a private repo, let
@@ -54,6 +55,51 @@ const secondary =
   "inline-flex h-12 items-center justify-center gap-2 rounded-2xl border border-line-strong bg-surface-raised px-6 text-[15px] font-medium transition-colors hover:border-ink-muted";
 const tile = "rounded-3xl border border-line bg-surface-raised p-6";
 const REPO = "https://github.com/GeekyADAMS/gitmarks";
+const INTRO = "https://geekyadams.github.io/gitmarks/";
+
+const devices = [
+  {
+    name: "iPhone & iPad",
+    how: "Add the Shortcut and paste your key. Then Share → Save to gitmarks, in any app.",
+    link: { label: "Get the Shortcut", href: SHORTCUT_LINK },
+  },
+  {
+    name: "Android",
+    how: "Open gitmarks in Chrome and Add to Home screen. It joins every app's Share menu.",
+  },
+  {
+    name: "Chrome, Arc, Brave, Edge",
+    how: "The extension saves any page in one click, and puts a save button on every post on X.",
+    link: { label: "Get the extension", href: EXTENSION_LINK },
+  },
+  {
+    name: "Safari, Firefox, any browser",
+    how: "Drag the Save to gitmarks button to your bookmarks bar. Nothing to install.",
+  },
+];
+
+const faq = [
+  {
+    q: "Is it really free?",
+    a: "Yes. gitmarks is open source and keeps no database, so there is nothing to charge for. Your bookmarks live in a GitHub repo, and private repos are free on GitHub.",
+  },
+  {
+    q: "Do I need to know git?",
+    a: "No. You click two buttons on GitHub once, and gitmarks does the rest. Git just happens to be where your bookmarks are kept, with every change saved in its history.",
+  },
+  {
+    q: "Can gitmarks see my other repos?",
+    a: "No. GitHub only lets it open the one repo you pick, and only that repo's files. Not your code, issues, profile or other repos.",
+  },
+  {
+    q: "What if gitmarks shuts down?",
+    a: "Your bookmarks stay where they are: one JSON file in your repo. You can read it, export it, or run your own copy of gitmarks on top of it in a few minutes.",
+  },
+  {
+    q: "How do I leave?",
+    a: `Uninstall ${a.slug} in your GitHub settings, under Applications. That signs out every device at once. Your bookmarks stay in your repo; delete the repo if you want them gone.`,
+  },
+];
 const github = `<svg aria-hidden="true" width="18" height="18" viewBox="0 0 16 16" fill="currentColor"><path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27s1.36.09 2 .27c1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.01 8.01 0 0 0 16 8c0-4.42-3.58-8-8-8"/></svg>`;
 ---
 
@@ -88,7 +134,12 @@ const github = `<svg aria-hidden="true" width="18" height="18" viewBox="0 0 16 1
         <Fragment set:html={github} /> Sign in with GitHub
       </a>
     </div>
-    <p class="mt-4 text-[13px] text-ink-muted">No new account. About a minute to set up.</p>
+    <p class="mt-4 text-[13px] text-ink-muted">
+      No new account. About a minute to set up.{" "}
+      <a href={INTRO} class="font-medium text-ink underline underline-offset-2">
+        ▶ Watch the 30-second intro
+      </a>
+    </p>
   </section>
 
   <figure class="overflow-hidden rounded-[28px] border border-line bg-[#151515] shadow-[0_30px_80px_-30px_rgb(0_0_0/0.35)]">
@@ -160,12 +211,41 @@ const github = `<svg aria-hidden="true" width="18" height="18" viewBox="0 0 16 1
     </p>
   </section>
 
+  <section class="pt-24">
+    <p class={`${label} text-center`}>Then, save from anywhere</p>
+    <h2 class="mt-3 text-center font-display text-[2.2rem] font-semibold tracking-[-0.035em]">
+      One tap, on every device
+    </h2>
+    <p class="mx-auto mt-3 max-w-[560px] text-center text-[15px] leading-relaxed text-ink-muted">
+      Once you're in, click <strong class="text-ink">Connect</strong>. It has your key ready to copy, and
+      everything below.
+    </p>
+    <ul class="mt-8 grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+      {devices.map((d) => (
+        <li class={`${tile} flex flex-col`}>
+          <h3 class="font-display text-lg font-semibold tracking-[-0.02em]">{d.name}</h3>
+          <p class="mt-2 flex-1 text-[15px] leading-relaxed text-ink-muted">{d.how}</p>
+          {d.link && (
+            <a
+              href={d.link.href}
+              target="_blank"
+              rel="noopener noreferrer"
+              class="mt-4 text-[14px] font-medium underline underline-offset-2"
+            >
+              {d.link.label} ↗
+            </a>
+          )}
+        </li>
+      ))}
+    </ul>
+  </section>
+
   <section class="grid gap-4 pt-24 md:grid-cols-3">
     <div class={tile}>
-      <h3 class="font-display text-lg font-semibold tracking-[-0.02em]">One tap from anywhere</h3>
+      <h3 class="font-display text-lg font-semibold tracking-[-0.02em]">Every save is a commit</h3>
       <p class="mt-2 text-[15px] leading-relaxed text-ink-muted">
-        The Share sheet on iPhone and Android, a Chrome extension with a button on every post on X, and a
-        bookmark-bar button for Safari and Firefox.
+        Your repo keeps a full history of every save, move and note, so nothing is ever really lost. Undo is
+        one click on the page.
       </p>
     </div>
     <div class={tile}>
@@ -184,7 +264,24 @@ const github = `<svg aria-hidden="true" width="18" height="18" viewBox="0 0 16 1
     </div>
   </section>
 
-  <section class="mt-4 flex flex-col items-start justify-between gap-4 rounded-3xl border border-line p-6 md:flex-row md:items-center">
+  <section class="mx-auto max-w-[760px] pt-24">
+    <h2 class="text-center font-display text-[2.2rem] font-semibold tracking-[-0.035em]">Questions</h2>
+    <div class="mt-8 divide-y divide-line border-y border-line">
+      {faq.map((f) => (
+        <details class="group py-5">
+          <summary class="flex cursor-pointer list-none items-center justify-between gap-4 text-[16px] font-medium [&::-webkit-details-marker]:hidden">
+            {f.q}
+            <span aria-hidden="true" class="text-ink-muted transition-transform group-open:rotate-45">
+              +
+            </span>
+          </summary>
+          <p class="mt-3 text-[15px] leading-relaxed text-ink-muted">{f.a}</p>
+        </details>
+      ))}
+    </div>
+  </section>
+
+  <section class="mt-16 flex flex-col items-start justify-between gap-4 rounded-3xl border border-line p-6 md:flex-row md:items-center">
     <div>
       <h3 class="font-display text-lg font-semibold tracking-[-0.02em]">Want maximum privacy?</h3>
       <p class="mt-1 text-[15px] text-ink-muted">

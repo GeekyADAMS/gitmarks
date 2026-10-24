@@ -11,7 +11,7 @@ Instagram, Reddit. Tap **Share → Save to gitmarks**, pick a category, done.
 
 1. In gitmarks, click **Connect**, then **Copy** beside your key.
 2. Open the link above on your iPhone or iPad and tap **Add Shortcut**. iOS asks two questions:
-   - **Your gitmarks address:** keep `https://gitmarks.a9m.pro`. If you host gitmarks yourself, put your own address instead.
+   - **Gitmarks web url:** keep `https://gitmarks.a9m.pro`. If you host gitmarks yourself, put your own address instead.
    - **Your key:** paste the key you copied. It starts with `gm_`.
 3. In any app, tap **Share → Save to gitmarks** and pick a category. The first time, iOS asks whether it may connect to your address: tap **Always Allow**.
 
