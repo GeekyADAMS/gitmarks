@@ -11,5 +11,11 @@ export default defineConfig({
   // which is also what `astro preview` needs.
   adapter: process.env.VERCEL ? vercel() : node({ mode: "standalone" }),
   integrations: [react()],
-  vite: { plugins: [tailwindcss()] },
+  vite: {
+    plugins: [tailwindcss()],
+    // Bundled rather than loaded from node_modules at runtime: the icon package
+    // is 25 MB and its index pulls in every icon, which made each cold start of
+    // the server function take seconds. Bundled, only the icons in use ship.
+    ssr: { noExternal: ["@phosphor-icons/react"] },
+  },
 });

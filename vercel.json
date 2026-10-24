@@ -1,4 +1,15 @@
 {
   "$schema": "https://openapi.vercel.sh/vercel.json",
-  "ignoreCommand": "git diff --quiet HEAD^ HEAD -- . ':(exclude)data/'"
+  "ignoreCommand": "git diff --quiet HEAD^ HEAD -- . ':(exclude)data/'",
+  "headers": [
+    {
+      "source": "/:file(hero\\.webp|og\\.jpg|intro\\.jpg|intro\\.mp4|icon\\.svg|icon-192\\.png|icon-512\\.png)",
+      "headers": [
+        {
+          "key": "Cache-Control",
+          "value": "public, max-age=86400, stale-while-revalidate=604800"
+        }
+      ]
+    }
+  ]
 }
