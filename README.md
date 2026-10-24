@@ -19,9 +19,9 @@
 </p>
 
 <p align="center">
-  <a href="https://geekyadams.github.io/gitmarks/"><img src="docs/video/preview.webp" alt="15-second intro to gitmarks: scattered links fly into categories, are saved from an iPhone, and land in a git log as commits. Click to watch it with sound."></a>
+  <a href="https://geekyadams.github.io/gitmarks/"><img src="docs/video/preview.webp" alt="30-second intro to gitmarks: scattered links sort themselves into categories, setup takes two clicks on GitHub, a post is saved from an iPhone, and every save lands in a git log as a commit. Click to watch it with sound."></a>
   <br>
-  <sub>▶ <a href="https://geekyadams.github.io/gitmarks/"><strong>Watch the 15-second intro with sound</strong></a> · <a href="docs/video/gitmarks-intro.mp4">download the MP4</a></sub>
+  <sub>▶ <a href="https://geekyadams.github.io/gitmarks/"><strong>Watch the 30-second intro with sound</strong></a> · <a href="docs/video/gitmarks-intro.mp4">download the MP4</a></sub>
 </p>
 
 ## Why

@@ -7,11 +7,11 @@ Instagram, Reddit. Tap **Share → Save to gitmarks**, pick a category, done.
 
 ## Install it (two minutes)
 
-**[Get the Shortcut →](https://www.icloud.com/shortcuts/e1abbf4623e14ebaa4b2dcd4cf62f78f)**
+**[Get the Shortcut →](https://www.icloud.com/shortcuts/6d21e0a023ad4bcf9dab29756d07253f)**
 
 1. In gitmarks, click **Connect**, then **Copy** beside your key.
 2. Open the link above on your iPhone or iPad and tap **Add Shortcut**. iOS asks two questions:
-   - **Your gitmarks address:** keep `https://gitmarks.a9m.pro`. If you host gitmarks yourself, put your own address instead.
+   - **Gitmarks web url:** keep `https://gitmarks.a9m.pro`. If you host gitmarks yourself, put your own address instead.
    - **Your key:** paste the key you copied. It starts with `gm_`.
 3. In any app, tap **Share → Save to gitmarks** and pick a category. The first time, iOS asks whether it may connect to your address: tap **Always Allow**.
 
@@ -81,7 +81,7 @@ Go to **Settings → Accessibility → Touch → Back Tap → Double Tap** and c
 If you publish a fork, or run your own hosted gitmarks, and want to share a link of your own:
 
 1. Build the Shortcut as above, with your address in step 1.
-2. In its settings, under **Setup**, add an import question for each of the two Text actions in steps 1 and 2: _Your gitmarks address_ and _Your key_. iOS offers the current text as each answer's default, so keep your address there.
+2. Long-press it → **Details** → **Import Questions** → **Add New Question…**, and pick the first **Text** block (your address). Repeat for the second **Text** block (your key). Tap each question to word it: _Your gitmarks address_ and _Your key_. iOS offers the current text as each answer's default, so keep your address there.
 3. Clear your own key out of the Text action in step 2. iCloud links include the values you leave in.
 4. Tap **Share → Copy iCloud Link**.
 
