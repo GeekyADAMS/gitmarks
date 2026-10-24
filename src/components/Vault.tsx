@@ -1105,7 +1105,7 @@ function Empty({ view, searching, hasAny }: { view: View; searching: boolean; ha
 
 // --- Connecting devices -------------------------------------------------------
 
-const SHORTCUT_LINK = "https://github.com/GeekyADAMS/gitmarks/tree/main/shortcut#install-it-two-minutes";
+const SHORTCUT_LINK = "https://www.icloud.com/shortcuts/6d21e0a023ad4bcf9dab29756d07253f";
 const EXTENSION_LINK = "https://github.com/GeekyADAMS/gitmarks/tree/main/extension#readme";
 
 /**
