@@ -19,9 +19,9 @@
 </p>
 
 <p align="center">
-  <a href="https://geekyadams.github.io/gitmarks/"><img src="docs/video/preview.webp" alt="30-second intro to gitmarks: scattered links sort themselves into categories, setup takes two clicks on GitHub, a post is saved from an iPhone, and every save lands in a git log as a commit. Click to watch it with sound."></a>
+  <a href="https://geekyadams.github.io/gitmarks/"><img src="docs/video/preview.webp" alt="One-minute intro to gitmarks: saves from X, YouTube and the web end up buried in bookmarks, tabs and chats to yourself; X locks folders behind Premium; read-it-later apps shut down. gitmarks sorts it all into your own categories, saves in one tap from any app, keeps everything in a private GitHub repo you own, and takes two clicks to set up. Click to watch it with sound."></a>
   <br>
-  <sub>▶ <a href="https://geekyadams.github.io/gitmarks/"><strong>Watch the 30-second intro with sound</strong></a> · <a href="docs/video/gitmarks-intro.mp4">download the MP4</a></sub>
+  <sub>▶ <a href="https://geekyadams.github.io/gitmarks/"><strong>Watch the one-minute intro with sound</strong></a> · <a href="docs/video/gitmarks-intro.mp4">download the MP4</a></sub>
 </p>
 
 ## Why
