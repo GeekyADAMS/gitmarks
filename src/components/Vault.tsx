@@ -325,7 +325,7 @@ export default function Vault({
   const categoryAction = (action: CategoryAction) => send(action, [action]);
 
   /** Every old key stops working; the new one is shown in place of it. */
-  async function resetKey() {
+  async function resetKey(): Promise<boolean> {
     try {
       const res = await fetch("/api/vault", {
         method: "POST",
@@ -341,11 +341,12 @@ export default function Vault({
       if (!result.ok || !result.key || !result.vault) throw new Error(result.error);
       setBase(result.vault);
       setKey(result.key);
-      notify("New key made. Paste it into your devices.");
+      return true;
     } catch (error) {
       notify(error instanceof Error && error.message ? error.message : "Could not reset the key.", {
         error: true,
       });
+      return false;
     }
   }
 
@@ -1791,7 +1792,15 @@ export const EXTENSION_LINK =
 const bookmarklet = (origin: string) =>
   `javascript:void window.open(${JSON.stringify(`${origin}/share?popup=1&url=`)}+encodeURIComponent(location.href)+"&title="+encodeURIComponent(document.title),"gitmarks","popup,width=440,height=680")`;
 
-function CopyRow({ label, value, shown }: { label: string; value: string; shown: string }) {
+function CopyButton({
+  value,
+  label = "Copy",
+  strong = false,
+}: {
+  value: string;
+  label?: string;
+  strong?: boolean;
+}) {
   const [copied, setCopied] = useState(false);
   return (
     <button
@@ -1801,18 +1810,67 @@ function CopyRow({ label, value, shown }: { label: string; value: string; shown:
         setCopied(true);
         setTimeout(() => setCopied(false), 1600);
       }}
-      className="flex w-full cursor-pointer items-center gap-3 rounded-xl border border-line-strong bg-surface-raised px-4 py-3 text-left"
+      className={`flex h-9 shrink-0 cursor-pointer items-center gap-1.5 rounded-lg px-3 text-[13px] font-medium transition-colors ${
+        strong ? "bg-ink text-surface" : "border border-line-strong text-ink hover:bg-surface-sunken"
+      }`}
     >
-      <span className="w-16 shrink-0 font-mono text-[11px] uppercase tracking-[0.14em] text-ink-muted">
-        {label}
-      </span>
-      <span className="min-w-0 flex-1 truncate font-mono text-[13px]">{shown}</span>
-      <span className="shrink-0 text-[13px] text-ink-muted">{copied ? "Copied" : "Copy"}</span>
+      {copied ? <Check size={14} aria-hidden="true" /> : <Copy size={14} aria-hidden="true" />}
+      {copied ? "Copied" : label}
     </button>
   );
 }
 
-/** How to save from everywhere else, with the address and key ready to copy. */
+type Device = "ios" | "android" | "chrome" | "other";
+
+const DEVICES: { id: Device; tab: string; name: string }[] = [
+  { id: "ios", tab: "iPhone", name: "iPhone & iPad" },
+  { id: "android", tab: "Android", name: "Android" },
+  { id: "chrome", tab: "Chrome", name: "Chrome, Arc, Brave, Edge" },
+  { id: "other", tab: "Others", name: "Safari, Firefox, any browser" },
+];
+
+/** Opens on the tab for the device in hand. */
+function guessDevice(): Device {
+  const ua = navigator.userAgent;
+  if (/iPhone|iPad/.test(ua) || (/Macintosh/.test(ua) && navigator.maxTouchPoints > 1)) return "ios";
+  if (/Android/.test(ua)) return "android";
+  if (/Firefox/.test(ua) || (/Safari/.test(ua) && !/Chrome|Chromium/.test(ua))) return "other";
+  return "chrome";
+}
+
+function Steps({ children }: { children: React.ReactNode }) {
+  return <ol className="space-y-3">{children}</ol>;
+}
+
+function Step({ n, children }: { n: number; children: React.ReactNode }) {
+  return (
+    <li className="flex gap-3 text-[14px] leading-relaxed">
+      <span
+        aria-hidden="true"
+        className="mt-0.5 flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-surface-sunken font-mono text-[11px] text-ink-muted"
+      >
+        {n}
+      </span>
+      <span className="min-w-0">{children}</span>
+    </li>
+  );
+}
+
+function GetLink({ href, children }: { href: string; children: React.ReactNode }) {
+  return (
+    <a
+      href={href}
+      target="_blank"
+      rel="noopener noreferrer"
+      className="mt-2 inline-flex h-9 items-center gap-1.5 rounded-lg bg-ink px-3.5 text-[13px] font-medium text-surface"
+    >
+      {children}
+      <ArrowUpRight size={13} aria-hidden="true" />
+    </a>
+  );
+}
+
+/** How to save from everywhere else, with the key ready to copy and to reset. */
 function ConnectButton({
   deviceKey,
   hosted,
@@ -1820,130 +1878,298 @@ function ConnectButton({
 }: {
   deviceKey: string;
   hosted: boolean;
-  onReset: () => Promise<void>;
+  onReset: () => Promise<boolean>;
 }) {
-  const [resetting, setResetting] = useState(false);
   const dialog = useRef<HTMLDialogElement>(null);
+  const [device, setDevice] = useState<Device>("chrome");
+  const [reset, setReset] = useState<"idle" | "confirm" | "working" | "done">("idle");
   const [hint, setHint] = useState(false);
   const origin = useSyncExternalStore(
     () => () => {},
     () => window.location.origin,
     () => "",
   );
-  const step = "rounded-2xl border border-line bg-surface-raised p-4";
-  const link = "text-ink underline underline-offset-2";
+  const label = "font-mono text-[11px] uppercase tracking-[0.14em] text-ink-muted";
+  const strong = "font-medium text-ink";
+  const name = DEVICES.find((d) => d.id === device)!.name;
+
   return (
     <>
       <button
         type="button"
-        onClick={() => dialog.current?.showModal()}
+        onClick={() => {
+          setDevice(guessDevice());
+          dialog.current?.showModal();
+        }}
+        aria-label="Connect"
+        title="Connect your devices"
         className="flex h-10 cursor-pointer items-center gap-2 rounded-xl border border-line bg-surface-raised px-3 text-[14px] text-ink-muted transition-colors hover:text-ink"
       >
         <DeviceMobile size={16} aria-hidden="true" />
         <span className="hidden sm:inline">Connect</span>
       </button>
       {/* A click on the backdrop closes it. Keyboard users have Escape (native to
-          <dialog>) and the Done button, so no key handler is missing. */}
+          <dialog>) and the close button, so no key handler is missing. */}
       {/* eslint-disable-next-line jsx-a11y/click-events-have-key-events, jsx-a11y/no-noninteractive-element-interactions */}
       <dialog
         ref={dialog}
         aria-labelledby="connect-title"
         onClick={(e) => e.target === e.currentTarget && e.currentTarget.close()}
-        className="m-auto max-h-[calc(100dvh-2rem)] w-[min(560px,calc(100vw-2rem))] rounded-3xl border border-line bg-surface p-0 text-ink backdrop:bg-black/40 backdrop:backdrop-blur-sm"
+        onClose={() => {
+          setReset("idle");
+          setHint(false);
+        }}
+        className="m-auto max-h-[calc(100dvh-2rem)] w-[min(520px,calc(100vw-2rem))] rounded-3xl border border-line bg-surface p-0 text-ink backdrop:bg-black/40 backdrop:backdrop-blur-sm"
       >
-        <div className="space-y-3 p-6">
-          <h2 id="connect-title" className="font-display text-2xl font-semibold tracking-[-0.02em]">
-            Save from everywhere
-          </h2>
-          <p className="text-[14px] text-ink-muted">
-            {hosted
-              ? "Each device asks for your key once. Keep it private: it can save to your gitmarks."
-              : "Each device asks for this address and your key once. Keep the key private: it can save to your gitmarks."}
-          </p>
-          <div className="space-y-2">
-            <CopyRow label="Address" value={origin} shown={origin} />
-            <CopyRow
-              label="Key"
-              value={deviceKey}
-              shown={`${deviceKey.slice(0, 6)}••••••••${deviceKey.slice(-4)}`}
-            />
-            <p className="px-1 text-[13px] text-ink-muted">
-              Key shared by mistake?{" "}
-              <button
-                type="button"
-                disabled={resetting}
-                onClick={async () => {
-                  const ok = window.confirm(
-                    "Make a new key? Every device using the current one stops saving until you paste the new key into it.",
-                  );
-                  if (!ok) return;
-                  setResetting(true);
-                  await onReset();
-                  setResetting(false);
-                }}
-                className="cursor-pointer text-ink underline underline-offset-2 disabled:cursor-wait disabled:opacity-50"
-              >
-                {resetting ? "Resetting…" : "Reset key"}
-              </button>
-            </p>
-          </div>
-          <div className={step}>
-            <p className="font-medium">iPhone & iPad</p>
-            <p className="mt-1 text-[14px] text-ink-muted">
-              Add the Shortcut and paste your key when it asks. Then Share → Save to gitmarks from any app.{" "}
-              <a className={link} href={SHORTCUT_LINK} target="_blank" rel="noopener noreferrer">
-                Get the Shortcut
-              </a>
-            </p>
-          </div>
-          <div className={step}>
-            <p className="font-medium">Android</p>
-            <p className="mt-1 text-[14px] text-ink-muted">
-              Open this page in Chrome, then menu → Add to Home screen → Install. gitmarks then appears in
-              every app&apos;s Share menu. No key needed.
-            </p>
-          </div>
-          <div className={step}>
-            <p className="font-medium">Chrome, Arc, Brave, Edge</p>
-            <p className="mt-1 text-[14px] text-ink-muted">
-              A toolbar button, right-click saving, and a save button on every post on X. Open it once and
-              paste your key.{" "}
-              <a className={link} href={EXTENSION_LINK} target="_blank" rel="noopener noreferrer">
-                Get the extension
-              </a>
-            </p>
-          </div>
-          <div className={step}>
-            <p className="font-medium">Safari, Firefox, any browser</p>
-            <p className="mt-1 text-[14px] text-ink-muted">
-              Drag this button to your bookmarks bar. Click it on any page to save that page.
-            </p>
-            <a
-              href="#save-to-gitmarks"
-              // React refuses `javascript:` URLs in JSX, so the real address is set directly.
-              ref={(el) => {
-                if (el && origin) el.setAttribute("href", bookmarklet(origin));
-              }}
-              onClick={(e) => {
-                e.preventDefault();
-                setHint(true);
-              }}
-              draggable
-              className="mt-3 inline-flex h-9 cursor-grab items-center gap-2 rounded-xl bg-ink px-3.5 text-[13px] font-medium text-surface"
-            >
-              <LinkSimple size={14} aria-hidden="true" /> Save to gitmarks
-            </a>
-            {hint && (
-              <p role="status" className="mt-2 text-[13px] text-ink-muted">
-                Drag it, don&apos;t click it: drop it onto your bookmarks bar.
+        <div className="p-6 sm:p-7">
+          <div className="flex items-start justify-between gap-4">
+            <div>
+              <h2 id="connect-title" className="font-display text-2xl font-semibold tracking-[-0.02em]">
+                Save from everywhere
+              </h2>
+              <p className="mt-1.5 text-[14px] text-ink-muted">
+                Connect your phone and browsers in a minute.
               </p>
-            )}
+            </div>
+            <form method="dialog">
+              <button
+                aria-label="Close"
+                className="-mr-2 -mt-1 flex h-9 w-9 cursor-pointer items-center justify-center rounded-lg text-ink-muted transition-colors hover:bg-surface-sunken hover:text-ink"
+              >
+                <X size={16} aria-hidden="true" />
+              </button>
+            </form>
           </div>
-          <form method="dialog" className="pt-1 text-right">
-            <button className="cursor-pointer rounded-xl bg-ink px-4 py-2 text-[14px] font-medium text-surface">
-              Done
-            </button>
-          </form>
+
+          {/* The key, and what to do if it leaks. */}
+          <section
+            aria-labelledby="key-title"
+            className="mt-6 rounded-2xl border border-line bg-surface-raised"
+          >
+            <div className="p-4">
+              <div className="flex items-center justify-between gap-3">
+                <div className="min-w-0">
+                  <h3 id="key-title" className={label}>
+                    Your key
+                  </h3>
+                  <p className="mt-1.5 truncate font-mono text-[14px]">
+                    {deviceKey.slice(0, 6)}••••••••{deviceKey.slice(-4)}
+                  </p>
+                </div>
+                <CopyButton value={deviceKey} label="Copy key" strong />
+              </div>
+              <p className="mt-3 text-[13px] text-ink-muted">
+                The Shortcut and the extension ask for it once. Keep it private: anyone with it can save to
+                your gitmarks.
+              </p>
+              {!hosted && (
+                <div className="mt-4 flex items-center justify-between gap-3 border-t border-line pt-4">
+                  <div className="min-w-0">
+                    <p className={label}>Address</p>
+                    <p className="mt-1.5 truncate font-mono text-[14px]">{origin}</p>
+                  </div>
+                  <CopyButton value={origin} />
+                </div>
+              )}
+            </div>
+
+            <div className="border-t border-line p-4">
+              {reset === "idle" && (
+                <div className="flex items-center justify-between gap-3">
+                  <p className="text-[13px] text-ink-muted">Shared your key by mistake?</p>
+                  <button
+                    type="button"
+                    onClick={() => setReset("confirm")}
+                    className="h-9 shrink-0 cursor-pointer rounded-lg border border-red-500/40 px-3 text-[13px] font-medium text-red-600 transition-colors hover:bg-red-500/10 dark:text-red-400"
+                  >
+                    Reset key
+                  </button>
+                </div>
+              )}
+
+              {(reset === "confirm" || reset === "working") && (
+                <div role="group" aria-labelledby="reset-title">
+                  <p id="reset-title" className="text-[14px] font-medium">
+                    Make a new key?
+                  </p>
+                  <p className="mt-1 text-[13px] leading-relaxed text-ink-muted">
+                    The current key stops working straight away. Your iPhone Shortcut and browser extension
+                    stop saving until you paste the new key into them. We&apos;ll show you how.
+                  </p>
+                  <div className="mt-3 flex justify-end gap-2">
+                    <button
+                      type="button"
+                      onClick={() => setReset("idle")}
+                      disabled={reset === "working"}
+                      className="h-9 cursor-pointer rounded-lg px-3 text-[13px] font-medium text-ink-muted hover:text-ink disabled:opacity-50"
+                    >
+                      Cancel
+                    </button>
+                    <button
+                      type="button"
+                      disabled={reset === "working"}
+                      onClick={async () => {
+                        setReset("working");
+                        setReset((await onReset()) ? "done" : "confirm");
+                      }}
+                      className="h-9 cursor-pointer rounded-lg bg-red-600 px-3 text-[13px] font-medium text-white disabled:cursor-wait disabled:opacity-60"
+                    >
+                      {reset === "working" ? "Making a new key…" : "Make a new key"}
+                    </button>
+                  </div>
+                </div>
+              )}
+
+              {reset === "done" && (
+                <div role="status">
+                  <p className="flex items-center gap-2 text-[14px] font-medium">
+                    <span className="flex h-5 w-5 items-center justify-center rounded-full bg-emerald-500 text-white">
+                      <Check size={12} weight="bold" aria-hidden="true" />
+                    </span>
+                    New key made. The old one no longer works.
+                  </p>
+                  <p className="mt-3 text-[13px] text-ink-muted">
+                    Copy it, then replace the old key on each device:
+                  </p>
+                  <div className="mt-3">
+                    <CopyButton value={deviceKey} label="Copy new key" strong />
+                  </div>
+                  <ul className="mt-4 space-y-3 text-[13px] leading-relaxed">
+                    <li>
+                      <p className={strong}>iPhone & iPad</p>
+                      <p className="text-ink-muted">
+                        Open the Shortcuts app, tap <span className={strong}>•••</span> on{" "}
+                        <span className={strong}>Save to gitmarks</span>, and paste the new key over the old
+                        one (the text starting with <span className="font-mono">gm_</span>). Tap{" "}
+                        <span className={strong}>Done</span>.
+                      </p>
+                    </li>
+                    <li>
+                      <p className={strong}>Chrome, Arc, Brave, Edge</p>
+                      <p className="text-ink-muted">
+                        Click the gitmarks icon in the toolbar, then <span className={strong}>⚙︎</span>. Paste
+                        the new key into <span className={strong}>Your key</span> and click{" "}
+                        <span className={strong}>Save settings</span>.
+                      </p>
+                    </li>
+                    <li>
+                      <p className={strong}>Android, and the bookmarks bar button</p>
+                      <p className="text-ink-muted">Nothing to do. They don&apos;t use a key.</p>
+                    </li>
+                  </ul>
+                  <div className="mt-4 flex justify-end">
+                    <button
+                      type="button"
+                      onClick={() => setReset("idle")}
+                      className="h-9 cursor-pointer rounded-lg border border-line-strong px-3 text-[13px] font-medium hover:bg-surface-sunken"
+                    >
+                      All replaced
+                    </button>
+                  </div>
+                </div>
+              )}
+            </div>
+          </section>
+
+          {/* One device at a time, as numbered steps. */}
+          <section aria-labelledby="devices-title" className="mt-7">
+            <h3 id="devices-title" className={label}>
+              Set up a device
+            </h3>
+            <div className="mt-3 grid grid-cols-4 gap-1 rounded-xl bg-surface-sunken p-1">
+              {DEVICES.map((d) => (
+                <button
+                  key={d.id}
+                  type="button"
+                  aria-pressed={device === d.id}
+                  onClick={() => setDevice(d.id)}
+                  className={`h-8 cursor-pointer rounded-lg text-[13px] font-medium transition-colors ${
+                    device === d.id ? "bg-surface-raised text-ink shadow-sm" : "text-ink-muted hover:text-ink"
+                  }`}
+                >
+                  {d.tab}
+                </button>
+              ))}
+            </div>
+
+            <div className="mt-5 px-1">
+              <p className="mb-4 text-[15px] font-medium">{name}</p>
+              {device === "ios" && (
+                <Steps>
+                  <Step n={1}>
+                    Open the Shortcut link in Safari.
+                    <br />
+                    <GetLink href={SHORTCUT_LINK}>Get the Shortcut</GetLink>
+                  </Step>
+                  <Step n={2}>
+                    Paste your key when it asks, then tap <span className={strong}>Add Shortcut</span>.
+                  </Step>
+                  <Step n={3}>
+                    In any app, tap <span className={strong}>Share</span>, then{" "}
+                    <span className={strong}>Save to gitmarks</span>.
+                  </Step>
+                </Steps>
+              )}
+              {device === "android" && (
+                <Steps>
+                  <Step n={1}>Open this page in Chrome on your phone.</Step>
+                  <Step n={2}>
+                    Tap the <span className={strong}>⋮</span> menu, then{" "}
+                    <span className={strong}>Add to Home screen</span> →{" "}
+                    <span className={strong}>Install</span>.
+                  </Step>
+                  <Step n={3}>
+                    In any app, tap <span className={strong}>Share</span>, then{" "}
+                    <span className={strong}>gitmarks</span>. No key needed.
+                  </Step>
+                </Steps>
+              )}
+              {device === "chrome" && (
+                <Steps>
+                  <Step n={1}>
+                    Add the extension, then pin it to the toolbar.
+                    <br />
+                    <GetLink href={EXTENSION_LINK}>Get the extension</GetLink>
+                  </Step>
+                  <Step n={2}>
+                    Click its icon, paste your key, and click <span className={strong}>Save settings</span>.
+                  </Step>
+                  <Step n={3}>
+                    Save with the toolbar button, a right-click, or the button on every post on X.
+                  </Step>
+                </Steps>
+              )}
+              {device === "other" && (
+                <Steps>
+                  <Step n={1}>
+                    Drag this button onto your bookmarks bar.
+                    <br />
+                    <a
+                      href="#save-to-gitmarks"
+                      // React refuses `javascript:` URLs in JSX, so the real address is set directly.
+                      ref={(el) => {
+                        if (el && origin) el.setAttribute("href", bookmarklet(origin));
+                      }}
+                      onClick={(e) => {
+                        e.preventDefault();
+                        setHint(true);
+                      }}
+                      draggable
+                      className="mt-2 inline-flex h-9 cursor-grab items-center gap-2 rounded-lg bg-ink px-3.5 text-[13px] font-medium text-surface"
+                    >
+                      <LinkSimple size={14} aria-hidden="true" /> Save to gitmarks
+                    </a>
+                    {hint && (
+                      <span role="status" className="mt-2 block text-[13px] text-ink-muted">
+                        Drag it, don&apos;t click it: drop it onto your bookmarks bar.
+                      </span>
+                    )}
+                  </Step>
+                  <Step n={2}>Click it on any page to save that page. No key needed.</Step>
+                </Steps>
+              )}
+            </div>
+          </section>
         </div>
       </dialog>
     </>
