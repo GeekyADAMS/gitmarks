@@ -8,12 +8,12 @@ Using Safari or Firefox? Use the **Save to gitmarks** button from **Connect** in
 
 ## Install
 
-1. Install gitmarks from the Chrome Web Store. Until that listing is live, use **Load it yourself** below.
+1. Install [gitmarks from the Chrome Web Store](https://chromewebstore.google.com/detail/gitmarks/alnhmhklodcajljkfbonfhkbeaedkalf). It works in Chrome, Arc, Brave and Edge.
 2. Pin it: click the puzzle-piece icon in the toolbar, then the pin beside **gitmarks**.
 3. In gitmarks, click **Connect** and copy your key. Click the gitmarks icon, paste the key, and **Save settings**. Self-hosting? Change the address to yours first.
 4. When the browser asks to let gitmarks read and change data on that site, click **Allow**. That's the only site it can talk to.
 
-### Load it yourself
+### Load it yourself (for development)
 
 1. Download this repository, or clone it.
 2. Open `chrome://extensions`, turn on **Developer mode** (top right), click **Load unpacked**, and choose this `extension` folder.
