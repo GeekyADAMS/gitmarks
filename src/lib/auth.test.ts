@@ -1,4 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { keyIsCurrent, type Owner } from "./owner";
+import type { Vault } from "./vault";
 import {
   checkBearer,
   checkPassword,
@@ -82,6 +84,41 @@ describe("the one secret", () => {
     // Self-hosted: one owner, so one key, and it does not reveal the secret.
     expect(deviceKey({})).not.toContain(SECRET);
     expect(readDeviceKey(`Bearer ${deviceKey({})}`)).toEqual({});
+  });
+
+  it("makes the same key as before resets existed, until there has been one", () => {
+    const before = `gm_${seal("device", { i: 1, r: "alice/bookmarks", u: 7 })}`;
+    expect(deviceKey({ i: 1, r: "alice/bookmarks", u: 7, k: undefined })).toBe(before);
+    const after = deviceKey({ i: 1, r: "alice/bookmarks", u: 7, k: "v2" })!;
+    expect(after).not.toBe(before);
+    expect(readDeviceKey(`Bearer ${after}`)).toEqual({ i: 1, r: "alice/bookmarks", u: 7, k: "v2" });
+  });
+});
+
+describe("resetting the key", () => {
+  const as = (viaKey: boolean, k?: string): Owner => ({
+    claims: { i: 1, r: "a/b", ...(k ? { k } : {}) },
+    store: null,
+    viaKey,
+  });
+  const vault = (keyVersion?: string): Vault => ({
+    categories: [],
+    marks: [],
+    ...(keyVersion ? { keyVersion } : {}),
+  });
+
+  it("keeps every existing key working until the first reset", () => {
+    expect(keyIsCurrent(as(true), vault())).toBe(true);
+  });
+
+  it("turns away keys from before the last reset, and takes the new one", () => {
+    expect(keyIsCurrent(as(true), vault("v2"))).toBe(false);
+    expect(keyIsCurrent(as(true, "v1"), vault("v2"))).toBe(false);
+    expect(keyIsCurrent(as(true, "v2"), vault("v2"))).toBe(true);
+  });
+
+  it("never signs out the page itself", () => {
+    expect(keyIsCurrent(as(false), vault("v2"))).toBe(true);
   });
 });
 

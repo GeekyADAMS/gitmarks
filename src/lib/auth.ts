@@ -28,9 +28,10 @@ export function same(a: string, b: string): boolean {
 /**
  * Who a session or device key belongs to. Self-hosted there is one owner, so
  * it is empty. Hosted, it names the GitHub App installation, the one repo the
- * bookmarks live in, and the GitHub user who signed in.
+ * bookmarks live in, and the GitHub user who signed in. A device key also
+ * carries `k`, the vault's key version when it was made.
  */
-export type Claims = { i?: number; r?: string; u?: number };
+export type Claims = { i?: number; r?: string; u?: number; k?: string };
 
 /**
  * `body.signature`, where the body is base64url JSON. The purpose is part of
@@ -72,14 +73,14 @@ export function readSession(token: string | undefined, now = Date.now()): Claims
 
 /**
  * What the extension and the phone Shortcut send as their bearer token. It
- * never expires, because a Shortcut that silently stops working is worse;
- * self-hosted, changing the secret revokes every key, and hosted, so does
- * uninstalling the GitHub App. Self-hosted there is exactly one key, so the
- * page can show it without ever showing the secret it is derived from.
+ * never expires, because a Shortcut that silently stops working is worse.
+ * Instead it carries the vault's key version, and Reset key in Connect changes
+ * that version, which turns every older key away. Until the first reset there
+ * is no version, so keys made before resets existed are still the current one.
  */
 export function deviceKey(claims: Claims): string | null {
-  const { i, r, u } = claims;
-  const sealed = seal("device", { i, r, u });
+  const { i, r, u, k } = claims;
+  const sealed = seal("device", { i, r, u, ...(k ? { k } : {}) });
   return sealed && `gm_${sealed}`;
 }
 

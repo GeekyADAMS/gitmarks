@@ -21,7 +21,7 @@ Using Safari or Firefox? Use the **Save to gitmarks** button from **Connect** in
 
 To try it against `pnpm dev`, use `http://localhost:4321` as the address.
 
-Your key is kept in the extension's local storage. To revoke it: hosted, uninstall the gitmarks app on GitHub; self-hosted, change `GITMARKS_SECRET` in Vercel and redeploy.
+Your key is kept in the extension's local storage. To revoke it, click **Reset key** in Connect on gitmarks, then paste the new key here.
 
 ## Publishing
 

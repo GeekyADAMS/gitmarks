@@ -2,6 +2,9 @@ import { describe, expect, it } from "vitest";
 import {
   EMPTY_VAULT,
   applyAction,
+  categoryTree,
+  matches,
+  withDescendants,
   extractUrls,
   normalizeUrl,
   parseRequest,
@@ -170,5 +173,165 @@ describe("splitMatches", () => {
 
   it("leaves text alone when there is no query", () => {
     expect(splitMatches("anything", "  ")).toEqual(["anything"]);
+  });
+});
+
+describe("vaults from before tags and folders", () => {
+  const legacy: Vault = {
+    categories: ["Reading", "Tools", "Design"],
+    marks: [mark({ id: "a", category: "Tools" }), mark({ id: "b", url: "https://example.com/b" })],
+  };
+
+  it("come through every old action unchanged in shape", () => {
+    const steps = [
+      { type: "put", mark: mark({ id: "c", url: "https://example.com/c", category: "Reading" }) },
+      { type: "update", id: "a", patch: { note: "hi" } },
+      { type: "addCategory", name: "Later" },
+      { type: "renameCategory", from: "Tools", to: "Kit" },
+      { type: "removeCategory", name: "Design" },
+      { type: "delete", id: "b" },
+    ] as const;
+    const after = steps.reduce(applyAction, legacy);
+    expect(Object.keys(after).sort()).toEqual(["categories", "marks"]);
+    expect(after.categories).toEqual(["Reading", "Kit", "Later"]);
+    expect(after.marks.every((m) => !("tags" in m))).toBe(true);
+  });
+
+  it("are all top level, in the order they were made", () => {
+    expect(categoryTree(legacy)).toEqual([
+      { name: "Reading", depth: 0 },
+      { name: "Tools", depth: 0 },
+      { name: "Design", depth: 0 },
+    ]);
+  });
+
+  it("keep fields this version does not touch", () => {
+    const v = { ...legacy, keyVersion: "v1" };
+    expect(applyAction(v, { type: "addCategory", name: "X" }).keyVersion).toBe("v1");
+    expect(applyAction(v, { type: "delete", id: "a" }).keyVersion).toBe("v1");
+  });
+});
+
+describe("folders", () => {
+  const base: Vault = {
+    categories: ["Work", "Home", "Design", "Ideas"],
+    marks: [mark({ id: "a", category: "Design" })],
+  };
+  const nested = applyAction(applyAction(base, { type: "moveCategory", name: "Design", parent: "Work" }), {
+    type: "moveCategory",
+    name: "Ideas",
+    parent: "Design",
+  });
+
+  it("nest, keeping each folder right after its parent in the flat list", () => {
+    expect(nested.parents).toEqual({ Design: "Work", Ideas: "Design" });
+    expect(nested.categories).toEqual(["Work", "Design", "Ideas", "Home"]);
+    expect(categoryTree(nested).map((c) => `${c.depth}:${c.name}`)).toEqual([
+      "0:Work",
+      "1:Design",
+      "2:Ideas",
+      "0:Home",
+    ]);
+    expect([...withDescendants(nested, "Work")]).toEqual(["Work", "Design", "Ideas"]);
+  });
+
+  it("refuse to go inside themselves", () => {
+    expect(applyAction(nested, { type: "moveCategory", name: "Work", parent: "Ideas" })).toBe(nested);
+    expect(applyAction(nested, { type: "moveCategory", name: "Work", parent: "Work" })).toBe(nested);
+    expect(applyAction(nested, { type: "moveCategory", name: "Work", parent: "Nope" })).toBe(nested);
+  });
+
+  it("come back to the top level, and drop the map once nothing is nested", () => {
+    const flat = applyAction(applyAction(nested, { type: "moveCategory", name: "Ideas", parent: "" }), {
+      type: "moveCategory",
+      name: "Design",
+      parent: "",
+    });
+    expect(flat.parents).toBeUndefined();
+  });
+
+  it("can be made inside another", () => {
+    const v = applyAction(nested, { type: "addCategory", name: "Logos", parent: "Design" });
+    expect(v.categories).toEqual(["Work", "Design", "Ideas", "Logos", "Home"]);
+    expect(v.parents?.Logos).toBe("Design");
+  });
+
+  it("move what was inside up a level when removed", () => {
+    const v = applyAction(nested, { type: "removeCategory", name: "Design" });
+    expect(v.parents).toEqual({ Ideas: "Work" });
+    expect(v.marks[0].category).toBe("Work");
+  });
+
+  it("follow a rename, on both sides of the map", () => {
+    const v = applyAction(nested, { type: "renameCategory", from: "Design", to: "Craft" });
+    expect(v.parents).toEqual({ Craft: "Work", Ideas: "Craft" });
+    expect(v.marks[0].category).toBe("Craft");
+  });
+
+  it("merged into one of their own folders, hand that folder their place", () => {
+    const v = applyAction(nested, { type: "renameCategory", from: "Design", to: "Ideas" });
+    expect(v.categories).toEqual(["Work", "Ideas", "Home"]);
+    expect(v.parents).toEqual({ Ideas: "Work" });
+  });
+
+  it("still show when the file has a loop typed into it", () => {
+    const loop: Vault = { categories: ["A", "B"], marks: [], parents: { A: "B", B: "A" } };
+    expect(
+      categoryTree(loop)
+        .map((c) => c.name)
+        .sort(),
+    ).toEqual(["A", "B"]);
+  });
+});
+
+describe("tags", () => {
+  const v: Vault = { categories: [], marks: [mark({ id: "a" })] };
+
+  it("are cleaned, de-duplicated, and removed entirely when emptied", () => {
+    const tagged = applyAction(v, { type: "update", id: "a", patch: { tags: ["design", "ui"] } });
+    expect(tagged.marks[0].tags).toEqual(["design", "ui"]);
+    const cleared = applyAction(tagged, { type: "update", id: "a", patch: { tags: [] } });
+    expect("tags" in cleared.marks[0]).toBe(false);
+    expect(
+      parseRequest({ type: "update", id: "a", patch: { tags: [" #Design ", "design", "UI", 4] } }),
+    ).toEqual({
+      type: "update",
+      id: "a",
+      patch: { tags: ["design", "ui"] },
+    });
+  });
+
+  it("survive saving the same link again", () => {
+    const tagged = applyAction(v, { type: "update", id: "a", patch: { tags: ["keep"] } });
+    const again = applyAction(tagged, { type: "put", mark: mark({ id: "new" }) });
+    expect(again.marks[0].tags).toEqual(["keep"]);
+  });
+
+  it("are searchable, with or without the #", () => {
+    const m = mark({ tags: ["design"] });
+    expect(matches(m, "#des")).toBe(true);
+    expect(matches(m, "design")).toBe(true);
+    expect(matches(m, "#ui")).toBe(false);
+  });
+});
+
+describe("parseRequest, for the new actions", () => {
+  it("reads folder moves, including back to the top", () => {
+    expect(parseRequest({ type: "moveCategory", name: "A", parent: "" })).toEqual({
+      type: "moveCategory",
+      name: "A",
+      parent: "",
+    });
+    expect(parseRequest({ type: "moveCategory", name: "A" })).toBeNull();
+    expect(parseRequest({ type: "addCategory", name: "A", parent: "B" })).toEqual({
+      type: "addCategory",
+      name: "A",
+      parent: "B",
+    });
+  });
+
+  it("asks for a new key but never accepts one", () => {
+    expect(parseRequest({ type: "resetKey" })).toEqual({ type: "resetKey" });
+    expect(parseRequest({ type: "setKeyVersion", version: "mine" })).toBeNull();
   });
 });
