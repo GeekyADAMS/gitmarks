@@ -38,13 +38,13 @@ export come free from git.
 
 ![On iPhone: tap Share, choose Save to gitmarks, pick a category, and a notification confirms it was saved](docs/images/iphone-flow.jpg)
 
-| Where                           | How                                                                                                                        |
-| ------------------------------- | -------------------------------------------------------------------------------------------------------------------------- |
-| **The web page**                | Press ⌘V anywhere, paste several links at once, or drag links in from other tabs. Drop cards onto categories to sort them. |
-| **Chrome · Arc · Brave · Edge** | A toolbar button (`Alt+Shift+S`), right-click on any link, and a save button on every post on X. → [Install it][store]     |
-| **Safari · Firefox · any**      | A **Save to gitmarks** button you drag to the bookmarks bar, from the Connect menu. Nothing to install.                    |
-| **iPhone · iPad**               | A Shortcut in the Share sheet of every app, with a category picker. → [Install it](shortcut/#install-it-two-minutes)       |
-| **Android**                     | Install the page to your home screen, and gitmarks joins every app's Share menu. One tap on a category saves.              |
+| Where                           | How                                                                                                                                                   |
+| ------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **The web page**                | Press ⌘V anywhere, paste several links at once, or drag links in from other tabs. Drag cards onto categories to sort them; on a phone, hold one down. |
+| **Chrome · Arc · Brave · Edge** | A toolbar button (`Alt+Shift+S`), right-click on any link, and a save button on every post on X. → [Install it][store]                                |
+| **Safari · Firefox · any**      | A **Save to gitmarks** button you drag to the bookmarks bar, from the Connect menu. Nothing to install.                                               |
+| **iPhone · iPad**               | A Shortcut in the Share sheet of every app, with a category picker. → [Install it](shortcut/#install-it-two-minutes)                                  |
+| **Android**                     | Install the page to your home screen, and gitmarks joins every app's Share menu. One tap on a category saves.                                         |
 
 [store]: https://chromewebstore.google.com/detail/gitmarks/alnhmhklodcajljkfbonfhkbeaedkalf
 
@@ -55,7 +55,10 @@ export come free from git.
 - **Rich previews.** Posts on X show text, author and media. Everything else shows its card image, title and description.
 - **Search that shows its work.** Matches are highlighted in the title, the text, your notes and the author.
 - **Instant.** Every change appears at once, then settles on the server's answer.
+- **Folders inside folders.** Drag one category onto another to nest it. A folder shows everything inside it.
+- **Tags.** Add as many as you like to any card, then click one to see everything that has it, across every category.
 - **Undo** on every move and delete. Notes on any card. Rename and merge categories.
+- **Reset your key** from Connect if it ever leaks. Every old key stops working at once.
 - **Light and dark**, following your system.
 
 ![Search for "cod" highlights every match in a long post](docs/images/search.jpg)

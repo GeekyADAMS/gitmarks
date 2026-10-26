@@ -1,8 +1,10 @@
-import { useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
+import { useEffect, useId, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import {
   ArrowUpRight,
   Check,
   Copy,
+  FolderPlus,
+  Hash,
   LinkSimple,
   MagnifyingGlass,
   NotePencil,
@@ -13,16 +15,23 @@ import {
   SquaresFour,
   Trash,
   Tray,
+  X,
   XLogo,
 } from "@phosphor-icons/react";
 import {
   MAX_BATCH,
+  MAX_TAGS,
   applyAction,
+  categoryTree,
+  cleanTag,
   extractUrls,
   matches,
+  parentOf,
   placeholderMark,
   splitMatches,
+  withDescendants,
   type Mark,
+  type MarkPatch,
   type Vault as VaultData,
   type VaultAction,
   type VaultRequest,
@@ -33,6 +42,17 @@ type View = { kind: "all" } | { kind: "inbox" } | { kind: "category"; name: stri
 type Toast = { id: number; message: string; undo?: () => void; error?: boolean };
 
 const DRAG_TYPE = "application/x-vault-mark";
+/** Indents a folder under its parent in the sidebar; on a phone the row is flat. */
+const INDENT = "md:pl-[calc(var(--depth)*14px)]";
+const depthVar = (depth: number) => ({ "--depth": depth }) as React.CSSProperties;
+/** A category being dragged onto another, to nest it there. */
+const DRAG_CATEGORY = "application/x-vault-category";
+type Tree = { name: string; depth: number }[];
+/** Actions that change categories, which the sidebar sends as they are. */
+type CategoryAction = Extract<
+  VaultAction,
+  { type: "addCategory" | "renameCategory" | "removeCategory" | "moveCategory" }
+>;
 let toastId = 0;
 
 // --- Small pure helpers -------------------------------------------------------
@@ -123,7 +143,12 @@ export default function Vault({
   const vault = useMemo(() => pending.reduce((v, p) => applyAction(v, p.action), base), [base, pending]);
 
   const [view, setView] = useState<View>({ kind: "all" });
+  const [tag, setTag] = useState<string | null>(null);
   const [query, setQuery] = useState("");
+  const [key, setKey] = useState(deviceKey);
+  // On a touch screen: the card held down, and the drop target under the finger.
+  const [carrying, setCarrying] = useState<Mark | null>(null);
+  const [hovering, setHovering] = useState<string | null>(null);
   const [toast, setToast] = useState<Toast | null>(
     loadError ? { id: 0, message: loadError, error: true } : null,
   );
@@ -207,11 +232,35 @@ export default function Vault({
     });
   }
 
-  const update = (mark: Mark, patch: { note?: string }) =>
+  const update = (mark: Mark, patch: MarkPatch) =>
     send({ type: "update", id: mark.id, patch }, [{ type: "update", id: mark.id, patch }]);
 
-  const categoryAction = (action: Exclude<VaultAction, { type: "put" | "update" | "delete" }>) =>
-    send(action, [action]);
+  const categoryAction = (action: CategoryAction) => send(action, [action]);
+
+  /** Every old key stops working; the new one is shown in place of it. */
+  async function resetKey() {
+    try {
+      const res = await fetch("/api/vault", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ type: "resetKey" }),
+      });
+      const result = (await res.json().catch(() => ({}))) as {
+        ok?: boolean;
+        vault?: VaultData;
+        key?: string;
+        error?: string;
+      };
+      if (!result.ok || !result.key || !result.vault) throw new Error(result.error);
+      setBase(result.vault);
+      setKey(result.key);
+      notify("New key made. Paste it into your devices.");
+    } catch (error) {
+      notify(error instanceof Error && error.message ? error.message : "Could not reset the key.", {
+        error: true,
+      });
+    }
+  }
 
   // Paste a link anywhere on the page, or drop one in from another tab.
   useEffect(() => {
@@ -267,17 +316,67 @@ export default function Vault({
     return () => clearTimeout(timer);
   }, [toast]);
 
+  const tree = useMemo(() => categoryTree(vault), [vault]);
+
+  // A folder counts everything inside it, however deep.
   const counts = useMemo(() => {
-    const map = new Map<string, number>();
-    for (const m of vault.marks) map.set(m.category, (map.get(m.category) ?? 0) + 1);
+    const own = new Map<string, number>();
+    for (const m of vault.marks) own.set(m.category, (own.get(m.category) ?? 0) + 1);
+    const map = new Map<string, number>([["", own.get("") ?? 0]]);
+    for (const name of vault.categories) {
+      let n = 0;
+      for (const c of withDescendants(vault, name)) n += own.get(c) ?? 0;
+      map.set(name, n);
+    }
     return map;
+  }, [vault]);
+
+  const tags = useMemo(() => {
+    const map = new Map<string, number>();
+    for (const m of vault.marks) for (const t of m.tags ?? []) map.set(t, (map.get(t) ?? 0) + 1);
+    return [...map].sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]));
   }, [vault.marks]);
 
+  // A tag nobody has any more stops filtering.
+  const activeTag = tag && tags.some(([t]) => t === tag) ? tag : null;
+  const inView =
+    view.kind === "category" ? withDescendants(vault, view.name) : new Set(view.kind === "inbox" ? [""] : []);
   const shown = vault.marks.filter(
     (m) =>
-      (view.kind === "all" || (view.kind === "inbox" ? m.category === "" : m.category === view.name)) &&
+      (view.kind === "all" || inView.has(m.category)) &&
+      (!activeTag || m.tags?.includes(activeTag)) &&
       matches(m, query),
   );
+
+  // While a card is carried on a touch screen, the page must not scroll under
+  // the finger, and the drop target under it lights up. React's touch handlers
+  // are passive, so these are attached by hand.
+  useEffect(() => {
+    if (!carrying) return;
+    const target = (touch: Touch) =>
+      document.elementFromPoint(touch.clientX, touch.clientY)?.closest<HTMLElement>("[data-drop]")?.dataset
+        .drop ?? null;
+    function onMove(event: TouchEvent) {
+      event.preventDefault();
+      setHovering(target(event.touches[0]));
+    }
+    function onEnd(event: TouchEvent) {
+      const name = event.changedTouches[0] ? target(event.changedTouches[0]) : null;
+      setHovering(null);
+      if (name === null) return; // Lifted elsewhere: the tray stays open to tap.
+      move(carrying!, name);
+      setCarrying(null);
+    }
+    const noMenu = (event: Event) => event.preventDefault();
+    document.addEventListener("touchmove", onMove, { passive: false });
+    document.addEventListener("touchend", onEnd);
+    document.addEventListener("contextmenu", noMenu);
+    return () => {
+      document.removeEventListener("touchmove", onMove);
+      document.removeEventListener("touchend", onEnd);
+      document.removeEventListener("contextmenu", noMenu);
+    };
+  });
 
   const columnCount = useSyncExternalStore(
     subscribeResize,
@@ -304,6 +403,10 @@ export default function Vault({
           }}
           onDropUrls={(urls, category) => add(urls, category)}
           onCategory={categoryAction}
+          tree={tree}
+          tags={tags}
+          activeTag={activeTag}
+          onTag={setTag}
         />
 
         <main id="main-content" className="min-w-0 flex-1">
@@ -316,9 +419,22 @@ export default function Vault({
                     ? "Inbox"
                     : activeView.name}
               </h1>
-              <p className="mt-2 font-mono text-xs tabular-nums text-ink-muted">
-                {shown.length} {shown.length === 1 ? "link" : "links"}
-                {query && ` matching “${query}”`}
+              <p className="mt-2 flex flex-wrap items-center gap-2 font-mono text-xs tabular-nums text-ink-muted">
+                <span>
+                  {shown.length} {shown.length === 1 ? "link" : "links"}
+                  {query && ` matching “${query}”`}
+                </span>
+                {activeTag && (
+                  <button
+                    type="button"
+                    onClick={() => setTag(null)}
+                    aria-label={`Stop filtering by #${activeTag}`}
+                    className="flex h-6 cursor-pointer items-center gap-1 rounded-md border border-line-strong bg-surface-raised pl-1.5 pr-1 text-ink"
+                  >
+                    #{activeTag}
+                    <X size={11} aria-hidden="true" />
+                  </button>
+                )}
               </p>
             </div>
             <div className="flex items-center gap-2">
@@ -347,7 +463,7 @@ export default function Vault({
                   /
                 </kbd>
               </label>
-              <ConnectButton deviceKey={deviceKey} hosted={hosted} />
+              <ConnectButton deviceKey={key} hosted={hosted} onReset={resetKey} />
               <button
                 type="button"
                 aria-label="Sign out"
@@ -366,7 +482,11 @@ export default function Vault({
           <AddBar category={targetCategory} onAdd={add} />
 
           {shown.length === 0 ? (
-            <Empty view={activeView} searching={Boolean(query)} hasAny={vault.marks.length > 0} />
+            <Empty
+              view={activeView}
+              searching={Boolean(query || activeTag)}
+              hasAny={vault.marks.length > 0}
+            />
           ) : (
             <div className="mt-2 flex items-start gap-4">
               {columns.map((column, i) => (
@@ -375,11 +495,15 @@ export default function Vault({
                     <Card
                       key={mark.id}
                       mark={mark}
-                      categories={vault.categories}
-                      showCategory={activeView.kind === "all"}
+                      tree={tree}
+                      allTags={tags}
+                      showCategory={activeView.kind !== "category" || mark.category !== activeView.name}
                       query={query}
                       onMove={(c) => move(mark, c)}
                       onNote={(note) => update(mark, { note })}
+                      onTags={(next) => update(mark, { tags: next })}
+                      onTag={setTag}
+                      onCarry={() => setCarrying(mark)}
                       onDelete={() => remove(mark)}
                       onCopied={() => notify("Link copied")}
                     />
@@ -390,6 +514,19 @@ export default function Vault({
           )}
         </main>
       </div>
+
+      {carrying && (
+        <MoveTray
+          mark={carrying}
+          tree={tree}
+          hovering={hovering}
+          onMove={(name) => {
+            move(carrying, name);
+            setCarrying(null);
+          }}
+          onCancel={() => setCarrying(null)}
+        />
+      )}
 
       {dropping && (
         <div className="pointer-events-none fixed inset-3 z-40 flex items-center justify-center rounded-3xl border-2 border-dashed border-line-strong bg-surface/80 backdrop-blur-sm">
@@ -458,6 +595,10 @@ function Sidebar({
   onDropMark,
   onDropUrls,
   onCategory,
+  tree,
+  tags,
+  activeTag,
+  onTag,
 }: {
   vault: VaultData;
   counts: Map<string, number>;
@@ -465,13 +606,99 @@ function Sidebar({
   onView: (view: View) => void;
   onDropMark: (id: string, category: string) => void;
   onDropUrls: (urls: string[], category: string) => void;
-  onCategory: (action: Exclude<VaultAction, { type: "put" | "update" | "delete" }>) => void;
+  onCategory: (action: CategoryAction) => void;
+  tree: Tree;
+  tags: [string, number][];
+  activeTag: string | null;
+  onTag: (tag: string | null) => void;
 }) {
-  const [adding, setAdding] = useState(false);
+  /** Where a new category is being typed: `""` at the top level, or inside that folder. */
+  const [adding, setAdding] = useState<string | null>(null);
   const [editing, setEditing] = useState<string | null>(null);
 
   const isActive = (v: View) =>
     v.kind === view.kind && (v.kind !== "category" || (view.kind === "category" && v.name === view.name));
+
+  const nest = (name: string, parent: string) => onCategory({ type: "moveCategory", name, parent });
+
+  const newInput = (parent: string, depth: number) => (
+    <li key={`new:${parent}`} className={`shrink-0 ${INDENT}`} style={depthVar(depth)}>
+      <CategoryInput
+        initial=""
+        label={parent ? `New folder in ${parent}` : "New category name"}
+        onDone={(value) => {
+          setAdding(null);
+          if (value) {
+            onCategory({ type: "addCategory", name: value, ...(parent ? { parent } : {}) });
+            onView({ kind: "category", name: value });
+          }
+        }}
+      />
+    </li>
+  );
+
+  const rows: React.ReactNode[] = [];
+  tree.forEach(({ name, depth }, i) => {
+    const indent = depthVar(depth);
+    if (editing === name) {
+      const inside = withDescendants(vault, name);
+      rows.push(
+        <li key={name} className={`shrink-0 ${INDENT}`} style={indent}>
+          <CategoryInput
+            initial={name}
+            label={`Rename ${name}`}
+            onDone={(value) => {
+              setEditing(null);
+              if (value && value !== name) {
+                onCategory({ type: "renameCategory", from: name, to: value });
+                onView({ kind: "category", name: value });
+              }
+            }}
+            onRemove={() => {
+              setEditing(null);
+              onCategory({ type: "removeCategory", name });
+              const up = parentOf(vault, name);
+              onView(up ? { kind: "category", name: up } : { kind: "inbox" });
+            }}
+            removeHint={`Its links move to ${parentOf(vault, name) || "the inbox"}.`}
+            parent={parentOf(vault, name)}
+            parents={tree.filter((t) => !inside.has(t.name))}
+            onParent={(parent) => nest(name, parent)}
+            onSubfolder={() => {
+              setEditing(null);
+              setAdding(name);
+            }}
+          />
+        </li>,
+      );
+    } else {
+      rows.push(
+        <Row
+          key={name}
+          label={name}
+          style={indent}
+          icon={<Dot name={name} />}
+          count={counts.get(name) ?? 0}
+          active={isActive({ kind: "category", name })}
+          onClick={() => onView({ kind: "category", name })}
+          onEdit={() => setEditing(name)}
+          drop={name}
+          onDropMark={(id) => onDropMark(id, name)}
+          onDropUrls={(urls) => onDropUrls(urls, name)}
+          onDropCategory={(dragged) => nest(dragged, name)}
+        />,
+      );
+    }
+    // A new folder is typed in at the end of the folder it goes in.
+    const next = tree[i + 1];
+    if (
+      adding &&
+      withDescendants(vault, adding).has(name) &&
+      !(next && withDescendants(vault, adding).has(next.name))
+    ) {
+      rows.push(newInput(adding, (tree.find((t) => t.name === adding)?.depth ?? 0) + 1));
+    }
+  });
 
   return (
     <nav
@@ -495,73 +722,77 @@ function Sidebar({
           count={counts.get("") ?? 0}
           active={isActive({ kind: "inbox" })}
           onClick={() => onView({ kind: "inbox" })}
+          drop=""
           onDropMark={(id) => onDropMark(id, "")}
           onDropUrls={(urls) => onDropUrls(urls, "")}
         />
-        <li
-          aria-hidden="true"
-          className="hidden px-3 pb-1.5 pt-5 font-mono text-[11px] uppercase tracking-[0.14em] text-ink-muted md:block"
-        >
-          Categories
-        </li>
-        {vault.categories.map((name) =>
-          editing === name ? (
-            <li key={name} className="shrink-0">
-              <CategoryInput
-                initial={name}
-                onDone={(value) => {
-                  setEditing(null);
-                  if (value && value !== name) {
-                    onCategory({ type: "renameCategory", from: name, to: value });
-                    onView({ kind: "category", name: value });
-                  }
-                }}
-                onRemove={() => {
-                  setEditing(null);
-                  onCategory({ type: "removeCategory", name });
-                  onView({ kind: "inbox" });
-                }}
-              />
-            </li>
-          ) : (
-            <Row
-              key={name}
-              label={name}
-              icon={<Dot name={name} />}
-              count={counts.get(name) ?? 0}
-              active={isActive({ kind: "category", name })}
-              onClick={() => onView({ kind: "category", name })}
-              onEdit={() => setEditing(name)}
-              onDropMark={(id) => onDropMark(id, name)}
-              onDropUrls={(urls) => onDropUrls(urls, name)}
-            />
-          ),
-        )}
-        <li className="shrink-0">
-          {adding ? (
-            <CategoryInput
-              initial=""
-              onDone={(value) => {
-                setAdding(false);
-                if (value) {
-                  onCategory({ type: "addCategory", name: value });
-                  onView({ kind: "category", name: value });
-                }
-              }}
-            />
-          ) : (
+        <DropHeading label="Categories" onDropCategory={(dragged) => nest(dragged, "")} />
+        {rows}
+        {adding === "" ? (
+          newInput("", 0)
+        ) : (
+          <li className="shrink-0">
             <button
               type="button"
-              onClick={() => setAdding(true)}
+              onClick={() => setAdding("")}
               className="flex h-9 w-full cursor-pointer items-center gap-2.5 whitespace-nowrap rounded-xl px-3 text-[14px] text-ink-muted transition-colors hover:text-ink"
             >
               <Plus size={15} aria-hidden="true" />
               New category
             </button>
-          )}
-        </li>
+          </li>
+        )}
+        {tags.length > 0 && (
+          <>
+            <li
+              aria-hidden="true"
+              className="hidden px-3 pb-1.5 pt-5 font-mono text-[11px] uppercase tracking-[0.14em] text-ink-muted md:block"
+            >
+              Tags
+            </li>
+            {tags.map(([t, n]) => (
+              <Row
+                key={`#${t}`}
+                label={t}
+                icon={<Hash size={13} aria-hidden="true" />}
+                count={n}
+                active={activeTag === t}
+                onClick={() => onTag(activeTag === t ? null : t)}
+              />
+            ))}
+          </>
+        )}
       </ul>
     </nav>
+  );
+}
+
+/** The "Categories" heading, which takes a dragged folder back to the top level. */
+function DropHeading({ label, onDropCategory }: { label: string; onDropCategory: (name: string) => void }) {
+  const [over, setOver] = useState(false);
+  return (
+    <li
+      aria-hidden="true"
+      onDragOver={(e) => {
+        if (!e.dataTransfer.types.includes(DRAG_CATEGORY)) return;
+        e.preventDefault();
+        setOver(true);
+      }}
+      onDragLeave={() => setOver(false)}
+      onDrop={(e) => {
+        setOver(false);
+        const name = e.dataTransfer.getData(DRAG_CATEGORY);
+        if (!name) return;
+        e.preventDefault();
+        onDropCategory(name);
+      }}
+      className={`hidden rounded-lg px-3 pb-1.5 pt-5 font-mono text-[11px] uppercase tracking-[0.14em] transition-colors md:block ${
+        over ? "text-ink" : "text-ink-muted"
+      }`}
+    >
+      {label}
+      {over && <span className="ml-2 normal-case tracking-normal">· move to top</span>}
+    </li>
   );
 }
 
@@ -572,8 +803,11 @@ function Row({
   active,
   onClick,
   onEdit,
+  drop,
   onDropMark,
   onDropUrls,
+  onDropCategory,
+  style,
 }: {
   label: string;
   icon: React.ReactNode;
@@ -581,19 +815,27 @@ function Row({
   active: boolean;
   onClick: () => void;
   onEdit?: () => void;
+  /** The category a card dropped here goes to, for touch drags as well as mouse ones. */
+  drop?: string;
   onDropMark?: (id: string) => void;
   onDropUrls?: (urls: string[]) => void;
+  /** Another category dropped here goes inside this one. */
+  onDropCategory?: (name: string) => void;
+  style?: React.CSSProperties;
 }) {
   const [over, setOver] = useState(false);
   const droppable = Boolean(onDropMark);
   return (
     <li
-      className="group/row relative shrink-0"
+      className={`group/row relative shrink-0 ${style ? INDENT : ""}`}
+      style={style}
+      data-drop={drop}
       onDragOver={(e) => {
-        if (!droppable) return;
+        const category = e.dataTransfer.types.includes(DRAG_CATEGORY);
+        if (!droppable || (category && !onDropCategory)) return;
         e.preventDefault();
         e.stopPropagation();
-        e.dataTransfer.dropEffect = e.dataTransfer.types.includes(DRAG_TYPE) ? "move" : "copy";
+        e.dataTransfer.dropEffect = category || e.dataTransfer.types.includes(DRAG_TYPE) ? "move" : "copy";
         setOver(true);
       }}
       onDragLeave={() => setOver(false)}
@@ -601,6 +843,11 @@ function Row({
         if (!droppable) return;
         e.preventDefault();
         setOver(false);
+        const category = e.dataTransfer.getData(DRAG_CATEGORY);
+        if (category) {
+          if (category !== label) onDropCategory?.(category);
+          return;
+        }
         const id = e.dataTransfer.getData(DRAG_TYPE);
         if (id) onDropMark?.(id);
         else
@@ -614,6 +861,12 @@ function Row({
         onClick={onClick}
         aria-current={active ? "page" : undefined}
         onDoubleClick={onEdit}
+        draggable={Boolean(onDropCategory)}
+        onDragStart={(e) => {
+          if (!onDropCategory) return;
+          e.dataTransfer.setData(DRAG_CATEGORY, label);
+          e.dataTransfer.effectAllowed = "move";
+        }}
         className={`flex h-9 w-full cursor-pointer items-center gap-2.5 whitespace-nowrap rounded-xl border px-3 text-left text-[14px] transition-all ${
           over
             ? "scale-[1.03] border-line-strong bg-surface-raised text-ink shadow-sm"
@@ -634,7 +887,7 @@ function Row({
         <button
           type="button"
           onClick={onEdit}
-          aria-label={`Rename ${label}`}
+          aria-label={`Edit ${label}`}
           className="absolute right-1.5 top-1/2 hidden h-6 w-6 -translate-y-1/2 cursor-pointer items-center justify-center rounded-md text-ink-muted opacity-0 transition-opacity hover:text-ink focus-visible:opacity-100 group-hover/row:opacity-100 md:flex"
         >
           <PencilSimple size={13} aria-hidden="true" />
@@ -644,14 +897,32 @@ function Row({
   );
 }
 
+/**
+ * Typing a category's name, new or renamed. Renaming also offers what has no
+ * drag on a phone or a keyboard: which folder it sits in, a folder inside it,
+ * and deleting it.
+ */
 function CategoryInput({
   initial,
+  label,
   onDone,
   onRemove,
+  removeHint,
+  parent,
+  parents,
+  onParent,
+  onSubfolder,
 }: {
   initial: string;
+  label: string;
   onDone: (value: string) => void;
   onRemove?: () => void;
+  removeHint?: string;
+  parent?: string;
+  /** Where it may move: never into itself or a folder of its own. */
+  parents?: Tree;
+  onParent?: (parent: string) => void;
+  onSubfolder?: () => void;
 }) {
   const [value, setValue] = useState(initial);
   const done = useRef(false);
@@ -660,39 +931,80 @@ function CategoryInput({
     done.current = true;
     onDone(v.trim());
   };
+  // Buttons here act on mouse-down, before the input's blur would close the editor.
+  const press = (fn: () => void) => (e: React.MouseEvent) => {
+    e.preventDefault();
+    done.current = true;
+    fn();
+  };
   return (
-    <div className="flex h-9 items-center gap-1 rounded-xl border border-line-strong bg-surface-raised pl-3 pr-1">
-      <Dot name={value || "new"} />
-      <input
-        // eslint-disable-next-line jsx-a11y/no-autofocus -- opened by the click that wants to type here
-        autoFocus
-        value={value}
-        maxLength={40}
-        aria-label={initial ? `Rename ${initial}` : "New category name"}
-        placeholder="Name"
-        onChange={(e) => setValue(e.target.value)}
-        onKeyDown={(e) => {
-          if (e.key === "Enter") finish(value);
-          if (e.key === "Escape") finish(initial);
-        }}
-        onBlur={() => finish(value)}
-        className="min-w-0 flex-1 bg-transparent pl-1.5 text-[14px] text-ink outline-none placeholder:text-ink-muted"
-      />
-      {onRemove && (
-        <button
-          type="button"
-          aria-label={`Delete ${initial}. Its links move to the inbox.`}
-          title="Delete category — its links move to the inbox"
-          // Fires before the input's blur would close the editor.
-          onMouseDown={(e) => {
-            e.preventDefault();
-            done.current = true;
-            onRemove();
+    <div
+      onBlur={(e) => {
+        if (!e.currentTarget.contains(e.relatedTarget as Node | null)) finish(value);
+      }}
+      className="rounded-xl border border-line-strong bg-surface-raised"
+    >
+      <div className="flex h-9 items-center gap-1 pl-3 pr-1">
+        <Dot name={value || "new"} />
+        <input
+          // eslint-disable-next-line jsx-a11y/no-autofocus -- opened by the click that wants to type here
+          autoFocus
+          value={value}
+          maxLength={40}
+          aria-label={label}
+          placeholder="Name"
+          onChange={(e) => setValue(e.target.value)}
+          onKeyDown={(e) => {
+            if (e.key === "Enter") finish(value);
+            if (e.key === "Escape") finish(initial);
           }}
-          className="flex h-7 w-7 cursor-pointer items-center justify-center rounded-lg text-ink-muted transition-colors hover:text-red-600"
-        >
-          <Trash size={14} aria-hidden="true" />
-        </button>
+          className="min-w-0 flex-1 bg-transparent pl-1.5 text-[14px] text-ink outline-none placeholder:text-ink-muted"
+        />
+        {onRemove && (
+          <button
+            type="button"
+            aria-label={`Delete ${initial}. ${removeHint}`}
+            title={`Delete category. ${removeHint}`}
+            onMouseDown={press(onRemove)}
+            className="flex h-7 w-7 cursor-pointer items-center justify-center rounded-lg text-ink-muted transition-colors hover:text-red-600"
+          >
+            <Trash size={14} aria-hidden="true" />
+          </button>
+        )}
+      </div>
+      {onParent && parents && (
+        <div className="flex items-center gap-1 border-t border-line py-1 pl-3 pr-1 text-[12px] text-ink-muted">
+          <label className="flex min-w-0 flex-1 items-center gap-1.5">
+            In
+            <select
+              value={parent ?? ""}
+              onChange={(e) => {
+                done.current = true;
+                onParent(e.target.value);
+                onDone(value.trim());
+              }}
+              className="min-w-0 flex-1 cursor-pointer truncate rounded-md bg-transparent py-1 text-ink"
+            >
+              <option value="">Top level</option>
+              {parents.map((t) => (
+                <option key={t.name} value={t.name}>
+                  {"\u00a0\u00a0".repeat(t.depth)}
+                  {t.name}
+                </option>
+              ))}
+            </select>
+          </label>
+          {onSubfolder && (
+            <button
+              type="button"
+              onMouseDown={press(onSubfolder)}
+              title="New folder inside this one"
+              className="flex h-7 cursor-pointer items-center gap-1 rounded-lg px-1.5 transition-colors hover:text-ink"
+            >
+              <FolderPlus size={14} aria-hidden="true" /> Folder
+            </button>
+          )}
+        </div>
       )}
     </div>
   );
@@ -766,27 +1078,44 @@ function AddBar({ category, onAdd }: { category: string; onAdd: (urls: string[])
 
 // --- Cards -------------------------------------------------------------------
 
+/** How long a finger rests on a card before it picks it up. */
+const HOLD_MS = 420;
+
 function Card({
   mark,
-  categories,
+  tree,
+  allTags,
   showCategory,
   query,
   onMove,
   onNote,
+  onTags,
+  onTag,
+  onCarry,
   onDelete,
   onCopied,
 }: {
   mark: Mark;
-  categories: string[];
+  tree: Tree;
+  allTags: [string, number][];
   showCategory: boolean;
   query: string;
   onMove: (category: string) => void;
   onNote: (note: string) => void;
+  onTags: (tags: string[]) => void;
+  onTag: (tag: string) => void;
+  /** A touch screen's drag: the card was held down, so offer somewhere to drop it. */
+  onCarry: () => void;
   onDelete: () => void;
   onCopied: () => void;
 }) {
   const [brokenImage, setBrokenImage] = useState(false);
   const [editingNote, setEditingNote] = useState(false);
+  const [editingTags, setEditingTags] = useState(false);
+  const hold = useRef<{ timer: number; x: number; y: number; fired: boolean } | null>(null);
+  const letGo = () => {
+    if (hold.current) clearTimeout(hold.current.timer);
+  };
   const image = mark.image && !brokenImage ? mark.image : undefined;
   // An image that fails before hydration fires its error event with no React
   // handler attached yet, so check on mount as well.
@@ -822,7 +1151,40 @@ function Card({
         e.dataTransfer.setData("text/uri-list", mark.url);
         e.dataTransfer.effectAllowed = "copyMove";
       }}
-      className="vault-card group relative overflow-hidden rounded-2xl border border-line bg-surface-raised transition-[border-color,box-shadow,transform] hover:-translate-y-0.5 hover:border-line-strong hover:shadow-[0_18px_40px_-24px_rgba(0,0,0,0.35)]"
+      // Mouse drags are the browser's own. Touch has none, so holding a card
+      // still for a moment picks it up instead; moving first is a scroll.
+      onTouchStart={(e) => {
+        if (e.touches.length !== 1 || isTyping(e.target)) return;
+        const { clientX: x, clientY: y } = e.touches[0];
+        letGo();
+        hold.current = {
+          x,
+          y,
+          fired: false,
+          timer: window.setTimeout(() => {
+            if (!hold.current) return;
+            hold.current.fired = true;
+            navigator.vibrate?.(10);
+            onCarry();
+          }, HOLD_MS),
+        };
+      }}
+      onTouchMove={(e) => {
+        const h = hold.current;
+        const t = e.touches[0];
+        if (h && !h.fired && Math.hypot(t.clientX - h.x, t.clientY - h.y) > 10) letGo();
+      }}
+      onTouchEnd={letGo}
+      onTouchCancel={letGo}
+      // The tap that ends a hold must not also open the link.
+      onClickCapture={(e) => {
+        if (hold.current?.fired) {
+          e.preventDefault();
+          e.stopPropagation();
+        }
+        hold.current = null;
+      }}
+      className="vault-card group relative overflow-hidden rounded-2xl border border-line bg-surface-raised transition-[border-color,box-shadow,transform] [-webkit-touch-callout:none] hover:-translate-y-0.5 hover:border-line-strong hover:shadow-[0_18px_40px_-24px_rgba(0,0,0,0.35)] pointer-coarse:select-none"
     >
       {image && !isX && (
         <img
@@ -914,6 +1276,34 @@ function Card({
           />
         )}
 
+        {editingTags ? (
+          <TagEditor
+            initial={mark.tags ?? []}
+            suggestions={allTags.map(([t]) => t)}
+            onDone={(next) => {
+              setEditingTags(false);
+              if (next.join("\n") !== (mark.tags ?? []).join("\n")) onTags(next);
+            }}
+          />
+        ) : (
+          mark.tags && (
+            <ul className="relative z-10 mt-3 flex flex-wrap gap-1.5">
+              {mark.tags.map((t) => (
+                <li key={t}>
+                  <button
+                    type="button"
+                    onClick={() => onTag(t)}
+                    title={`Show everything tagged #${t}`}
+                    className="cursor-pointer rounded-md bg-surface-sunken px-1.5 py-0.5 font-mono text-[11.5px] text-ink-muted transition-colors hover:text-ink"
+                  >
+                    #{hl(t)}
+                  </button>
+                </li>
+              ))}
+            </ul>
+          )
+        )}
+
         {editingNote ? (
           <NoteEditor
             initial={mark.note ?? ""}
@@ -933,7 +1323,7 @@ function Card({
         <footer className="relative z-10 mt-4 flex items-center gap-1">
           <CategoryPicker
             current={mark.category}
-            categories={categories}
+            tree={tree}
             onMove={onMove}
             // Inside a category every card would repeat its name, so it recedes.
             quiet={!showCategory && Boolean(mark.category)}
@@ -946,6 +1336,9 @@ function Card({
             {ago(mark.createdAt)}
           </time>
           <div className="ml-auto flex items-center opacity-100 transition-opacity md:opacity-0 md:group-hover:opacity-100 md:group-focus-within:opacity-100">
+            <IconButton label="Edit tags" onClick={() => setEditingTags(true)}>
+              <Hash size={15} aria-hidden="true" />
+            </IconButton>
             <IconButton label="Edit note" onClick={() => setEditingNote(true)}>
               <NotePencil size={15} aria-hidden="true" />
             </IconButton>
@@ -988,12 +1381,12 @@ const NEW = "\u0000new";
 /** A chip with a native select laid over it: the OS picker, the site's look. */
 function CategoryPicker({
   current,
-  categories,
+  tree,
   onMove,
   quiet = false,
 }: {
   current: string;
-  categories: string[];
+  tree: Tree;
   /** Moving to a name that does not exist yet creates it. */
   onMove: (category: string) => void;
   quiet?: boolean;
@@ -1016,9 +1409,10 @@ function CategoryPicker({
         className="absolute inset-0 cursor-pointer opacity-0"
       >
         <option value="">Inbox</option>
-        {categories.map((c) => (
-          <option key={c} value={c}>
-            {c}
+        {tree.map((c) => (
+          <option key={c.name} value={c.name}>
+            {"\u00a0\u00a0\u00a0".repeat(c.depth)}
+            {c.name}
           </option>
         ))}
         <option value={NEW}>New category…</option>
@@ -1075,6 +1469,149 @@ function NoteEditor({ initial, onDone }: { initial: string; onDone: (note: strin
       }}
       className="relative z-10 mt-3 w-full resize-none rounded-xl border border-line-strong bg-surface-raised p-3 text-[13.5px] leading-[1.5] text-ink outline-none placeholder:text-ink-muted"
     />
+  );
+}
+
+/** Tags as chips: Enter or a comma ends one, Backspace on an empty field takes the last back. */
+function TagEditor({
+  initial,
+  suggestions,
+  onDone,
+}: {
+  initial: string[];
+  suggestions: string[];
+  onDone: (tags: string[]) => void;
+}) {
+  const [tags, setTags] = useState(initial);
+  const [value, setValue] = useState("");
+  const listId = useId();
+  const withTyped = () => {
+    const t = cleanTag(value);
+    return t && !tags.includes(t) ? [...tags, t].slice(0, MAX_TAGS) : tags;
+  };
+  return (
+    <div
+      onBlur={(e) => {
+        if (!e.currentTarget.contains(e.relatedTarget as Node | null)) onDone(withTyped());
+      }}
+      className="relative z-10 mt-3 flex flex-wrap items-center gap-1.5 rounded-xl border border-line-strong bg-surface-raised p-2"
+    >
+      {tags.map((t) => (
+        <button
+          key={t}
+          type="button"
+          aria-label={`Remove #${t}`}
+          onClick={() => setTags(tags.filter((x) => x !== t))}
+          className="flex cursor-pointer items-center gap-1 rounded-md bg-surface-sunken px-1.5 py-0.5 font-mono text-[11.5px] text-ink"
+        >
+          #{t}
+          <X size={10} aria-hidden="true" />
+        </button>
+      ))}
+      <input
+        // eslint-disable-next-line jsx-a11y/no-autofocus -- opened by the click that wants to type here
+        autoFocus
+        value={value}
+        list={listId}
+        aria-label="Add a tag"
+        placeholder={tags.length ? "" : "Add tags"}
+        onChange={(e) => {
+          // A comma typed or pasted ends the tag before it.
+          const parts = e.target.value.split(",");
+          if (parts.length > 1) {
+            const added = parts
+              .slice(0, -1)
+              .map(cleanTag)
+              .filter((t) => t && !tags.includes(t));
+            setTags([...tags, ...new Set(added)].slice(0, MAX_TAGS));
+          }
+          setValue(parts[parts.length - 1]);
+        }}
+        onKeyDown={(e) => {
+          if (e.key === "Enter") {
+            e.preventDefault();
+            if (value.trim()) {
+              setTags(withTyped());
+              setValue("");
+            } else onDone(tags);
+          }
+          if (e.key === "Backspace" && !value && tags.length) setTags(tags.slice(0, -1));
+          if (e.key === "Escape") onDone(initial);
+        }}
+        className="min-w-[6rem] flex-1 bg-transparent font-mono text-[12.5px] text-ink outline-none placeholder:font-sans placeholder:text-ink-muted"
+      />
+      <datalist id={listId}>
+        {suggestions
+          .filter((t) => !tags.includes(t))
+          .map((t) => (
+            <option key={t} value={t} />
+          ))}
+      </datalist>
+    </div>
+  );
+}
+
+/**
+ * Where a held card goes on a touch screen: slide the finger onto a category,
+ * or let go and tap one. Pinned to the bottom, so the targets are always in
+ * reach, however far down the page the card was.
+ */
+function MoveTray({
+  mark,
+  tree,
+  hovering,
+  onMove,
+  onCancel,
+}: {
+  mark: Mark;
+  tree: Tree;
+  hovering: string | null;
+  onMove: (category: string) => void;
+  onCancel: () => void;
+}) {
+  const targets = [{ name: "", depth: 0 }, ...tree];
+  return (
+    <div className="fixed inset-0 z-[60] flex flex-col justify-end">
+      <button
+        type="button"
+        aria-label="Cancel moving"
+        onClick={onCancel}
+        className="absolute inset-0 cursor-default bg-black/30 backdrop-blur-[2px]"
+      />
+      <div
+        role="dialog"
+        aria-label={`Move ${mark.title}`}
+        className="vault-toast relative max-h-[60dvh] overflow-y-auto rounded-t-3xl border border-line bg-surface p-4 pb-[max(1rem,env(safe-area-inset-bottom))] shadow-[0_-20px_60px_-20px_rgba(0,0,0,0.4)]"
+      >
+        <p className="truncate px-1 text-[13px] text-ink-muted">
+          Move <span className="text-ink">{mark.title}</span> to
+        </p>
+        <ul className="mt-3 grid grid-cols-2 gap-2">
+          {targets.map(({ name, depth }) => (
+            <li key={name || "inbox"} data-drop={name}>
+              <button
+                type="button"
+                onClick={() => onMove(name)}
+                aria-current={mark.category === name ? "true" : undefined}
+                className={`flex h-12 w-full cursor-pointer items-center gap-2 rounded-2xl border px-3 text-left text-[14px] transition-all ${
+                  hovering === name
+                    ? "scale-[1.03] border-ink bg-surface-raised text-ink shadow-md"
+                    : mark.category === name
+                      ? "border-line-strong bg-surface-sunken text-ink-muted"
+                      : "border-line bg-surface-raised text-ink"
+                }`}
+              >
+                {name ? <Dot name={name} /> : <Tray size={14} aria-hidden="true" />}
+                <span className="min-w-0 flex-1 truncate">
+                  {depth > 0 && <span className="text-ink-muted">{"› ".repeat(depth)}</span>}
+                  {name || "Inbox"}
+                </span>
+              </button>
+            </li>
+          ))}
+        </ul>
+      </div>
+    </div>
   );
 }
 
@@ -1139,7 +1676,16 @@ function CopyRow({ label, value, shown }: { label: string; value: string; shown:
 }
 
 /** How to save from everywhere else, with the address and key ready to copy. */
-function ConnectButton({ deviceKey, hosted }: { deviceKey: string; hosted: boolean }) {
+function ConnectButton({
+  deviceKey,
+  hosted,
+  onReset,
+}: {
+  deviceKey: string;
+  hosted: boolean;
+  onReset: () => Promise<void>;
+}) {
+  const [resetting, setResetting] = useState(false);
   const dialog = useRef<HTMLDialogElement>(null);
   const [hint, setHint] = useState(false);
   const origin = useSyncExternalStore(
@@ -1184,6 +1730,25 @@ function ConnectButton({ deviceKey, hosted }: { deviceKey: string; hosted: boole
               value={deviceKey}
               shown={`${deviceKey.slice(0, 6)}••••••••${deviceKey.slice(-4)}`}
             />
+            <p className="px-1 text-[13px] text-ink-muted">
+              Key shared by mistake?{" "}
+              <button
+                type="button"
+                disabled={resetting}
+                onClick={async () => {
+                  const ok = window.confirm(
+                    "Make a new key? Every device using the current one stops saving until you paste the new key into it.",
+                  );
+                  if (!ok) return;
+                  setResetting(true);
+                  await onReset();
+                  setResetting(false);
+                }}
+                className="cursor-pointer text-ink underline underline-offset-2 disabled:cursor-wait disabled:opacity-50"
+              >
+                {resetting ? "Resetting…" : "Reset key"}
+              </button>
+            </p>
           </div>
           <div className={step}>
             <p className="font-medium">iPhone & iPad</p>

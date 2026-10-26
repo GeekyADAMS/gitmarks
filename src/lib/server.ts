@@ -1,6 +1,6 @@
 import fs from "node:fs/promises";
 import path from "node:path";
-import { randomUUID } from "node:crypto";
+import { randomBytes, randomUUID } from "node:crypto";
 import * as cheerio from "cheerio";
 
 import { safeFetch } from "./net";
@@ -97,6 +97,10 @@ export async function performRequest(store: Repo | null, request: VaultRequest):
     const publicRepo = await publicRepoProblem(store);
     if (publicRepo) {
       return { ok: false, error: `${publicRepo} is public, so saving is paused. Make it private on GitHub.` };
+    }
+    if (request.type === "resetKey") {
+      const version = randomBytes(9).toString("base64url");
+      return await mutate(store, [{ type: "setKeyVersion", version }], "gitmarks: reset the device key");
     }
     if (request.type !== "add") return await mutate(store, [request], `gitmarks: ${request.type}`);
     const marks = await Promise.all(

@@ -50,7 +50,7 @@ if (me && !publicRepo) {
   ) : publicRepo ? (
     <Setup publicRepo={publicRepo} hosted={hosted} />
   ) : me ? (
-    <Vault client:load initial={initial} loadError={error} deviceKey={keyFor(me)} hosted={hosted} />
+    <Vault client:load initial={initial} loadError={error} deviceKey={keyFor(me, initial)} hosted={hosted} />
   ) : hosted ? (
     <Landing />
   ) : (

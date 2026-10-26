@@ -311,6 +311,28 @@ console.log("hosted");
     assert.equal(res.status, 404);
   });
 
+  await check(
+    "resetting the key from the page turns the old one away, and a key cannot reset itself",
+    async () => {
+      const asKey = (k, body) =>
+        fetch(`${base}/api/vault`, {
+          ...(body ? { method: "POST", body: JSON.stringify(body) } : {}),
+          headers: { authorization: `Bearer ${k}`, "content-type": "application/json" },
+        });
+      assert.equal((await asKey(key, { type: "resetKey" })).status, 404);
+      const res = await fetch(`${base}/api/vault`, {
+        method: "POST",
+        headers: { cookie, origin: base, "content-type": "application/json" },
+        body: JSON.stringify({ type: "resetKey" }),
+      });
+      const result = await res.json();
+      assert.ok(result.ok && result.key && result.key !== key, "no new key");
+      assert.equal((await asKey(key)).status, 404);
+      assert.equal((await asKey(result.key)).status, 200);
+      key = result.key;
+    },
+  );
+
   await check("there is no shared password to guess", async () => {
     const res = await fetch(`${base}/api/login`, {
       method: "POST",

@@ -22,31 +22,56 @@ export type Mark = {
   /** `""` is the inbox. */
   category: string;
   note?: string;
+  /** Lower case, without the `#`. Absent when there are none. */
+  tags?: string[];
   createdAt: string;
   /** Client-only: shown while the server fetches the preview. Never stored. */
   pending?: boolean;
 };
 
-export type Vault = { categories: string[]; marks: Mark[] };
+export type Vault = {
+  /**
+   * Every category by name, parents before their children. Kept flat so that
+   * anything reading only this list (the extension, the Shortcut, the share
+   * page) still sees every category, in a sensible order.
+   */
+  categories: string[];
+  marks: Mark[];
+  /**
+   * Folders inside folders: each nested category's parent. Top-level ones have
+   * no entry, which is why a vault from before folders needs no migrating.
+   */
+  parents?: Record<string, string>;
+  /** Device keys carry this. Resetting the key changes it, which revokes every old one. */
+  keyVersion?: string;
+};
 
 export const EMPTY_VAULT: Vault = { categories: [], marks: [] };
+
+export type MarkPatch = Partial<Pick<Mark, "category" | "note" | "title" | "tags">>;
 
 /** What the reducer understands. `put` inserts or replaces, newest first. */
 export type VaultAction =
   | { type: "put"; mark: Mark }
-  | { type: "update"; id: string; patch: Partial<Pick<Mark, "category" | "note" | "title">> }
+  | { type: "update"; id: string; patch: MarkPatch }
   | { type: "delete"; id: string }
-  | { type: "addCategory"; name: string }
+  | { type: "addCategory"; name: string; parent?: string }
   | { type: "renameCategory"; from: string; to: string }
-  | { type: "removeCategory"; name: string };
+  | { type: "removeCategory"; name: string }
+  /** `parent` of `""` moves it to the top level. */
+  | { type: "moveCategory"; name: string; parent: string }
+  /** Server only: the version is made there, never taken from a request. */
+  | { type: "setKeyVersion"; version: string };
 
 /**
  * What a client sends. Identical to the reducer's actions except that adding is
- * by URL: the server builds the mark, because only the server can fetch the
- * preview.
+ * by URL, because only the server can fetch the preview, and that a new key is
+ * asked for rather than supplied.
  */
 export type VaultRequest =
-  Exclude<VaultAction, { type: "put" }> | { type: "add"; urls: string[]; category?: string; note?: string };
+  | Exclude<VaultAction, { type: "put" | "setKeyVersion" }>
+  | { type: "add"; urls: string[]; category?: string; note?: string }
+  | { type: "resetKey" };
 
 /** Most URLs one request may add. Each one is a preview fetch. */
 export const MAX_BATCH = 20;
@@ -116,6 +141,68 @@ function withCategory(categories: string[], name: string): string[] {
   return !name || categories.includes(name) ? categories : [...categories, name];
 }
 
+export const MAX_TAGS = 20;
+
+export function cleanTag(tag: string): string {
+  return tag.trim().replace(/^#+/, "").replace(/\s+/g, " ").trim().toLowerCase().slice(0, 30);
+}
+
+export function cleanTags(tags: string[]): string[] {
+  return [...new Set(tags.map(cleanTag).filter(Boolean))].slice(0, MAX_TAGS);
+}
+
+// --- Folders -------------------------------------------------------------------
+
+/** A category's parent, or `""` at the top level. A parent that no longer exists counts as none. */
+export function parentOf(vault: Vault, name: string): string {
+  const parent = vault.parents?.[name];
+  return parent && parent !== name && vault.categories.includes(parent) ? parent : "";
+}
+
+/** A category and every category inside it, however deep. */
+export function withDescendants(vault: Vault, name: string): Set<string> {
+  const found = new Set([name]);
+  for (let grew = true; grew;) {
+    grew = false;
+    for (const c of vault.categories) {
+      if (!found.has(c) && found.has(parentOf(vault, c))) {
+        found.add(c);
+        grew = true;
+      }
+    }
+  }
+  return found;
+}
+
+/** Depth-first, children in the order they are listed. */
+export function categoryTree(vault: Vault): { name: string; depth: number }[] {
+  const out: { name: string; depth: number }[] = [];
+  const seen = new Set<string>();
+  const visit = (name: string, depth: number) => {
+    if (seen.has(name)) return;
+    seen.add(name);
+    out.push({ name, depth });
+    for (const c of vault.categories) if (parentOf(vault, c) === name) visit(c, depth + 1);
+  };
+  for (const c of vault.categories) if (!parentOf(vault, c)) visit(c, 0);
+  // A loop typed into the file by hand has no root; it still shows, at the top.
+  for (const c of vault.categories) visit(c, 0);
+  return out;
+}
+
+/** The parents map without dead or empty entries; no key at all once nothing is nested. */
+function withParents(vault: Vault, parents: Record<string, string>): Vault {
+  const clean = Object.fromEntries(
+    Object.entries(parents).filter(
+      ([child, parent]) =>
+        parent && child !== parent && vault.categories.includes(child) && vault.categories.includes(parent),
+    ),
+  );
+  const next: Vault = { ...vault, parents: clean };
+  if (!Object.keys(clean).length) delete next.parents;
+  return { ...next, categories: categoryTree(next).map((n) => n.name) };
+}
+
 export function applyAction(vault: Vault, action: VaultAction): Vault {
   switch (action.type) {
     case "put": {
@@ -128,9 +215,13 @@ export function applyAction(vault: Vault, action: VaultAction): Vault {
             id: old.id,
             category: action.mark.category || old.category,
             ...(action.mark.note || old.note ? { note: action.mark.note || old.note } : {}),
+            ...(action.mark.tags?.length || old.tags?.length
+              ? { tags: action.mark.tags?.length ? action.mark.tags : old.tags }
+              : {}),
           }
         : action.mark;
       return {
+        ...vault,
         categories: withCategory(vault.categories, mark.category),
         marks: [mark, ...vault.marks.filter((m) => m.id !== mark.id && m.url !== mark.url)],
       };
@@ -138,40 +229,80 @@ export function applyAction(vault: Vault, action: VaultAction): Vault {
     case "update": {
       const category = action.patch.category === undefined ? undefined : cleanCategory(action.patch.category);
       return {
+        ...vault,
         categories: category ? withCategory(vault.categories, category) : vault.categories,
-        marks: vault.marks.map((m) =>
-          m.id !== action.id
-            ? m
-            : {
-                ...m,
-                ...action.patch,
-                ...(category !== undefined ? { category } : {}),
-              },
-        ),
+        marks: vault.marks.map((m) => {
+          if (m.id !== action.id) return m;
+          const next = { ...m, ...action.patch, ...(category !== undefined ? { category } : {}) };
+          if (next.tags && !next.tags.length) delete next.tags;
+          return next;
+        }),
       };
     }
     case "delete":
       return { ...vault, marks: vault.marks.filter((m) => m.id !== action.id) };
-    case "addCategory":
-      return { ...vault, categories: withCategory(vault.categories, cleanCategory(action.name)) };
-    case "renameCategory": {
-      const to = cleanCategory(action.to);
-      if (!to || to === action.from) return vault;
-      // Renaming onto an existing name merges the two.
-      const categories = vault.categories.includes(to)
-        ? vault.categories.filter((c) => c !== action.from)
-        : vault.categories.map((c) => (c === action.from ? to : c));
-      return {
-        categories,
-        marks: vault.marks.map((m) => (m.category === action.from ? { ...m, category: to } : m)),
-      };
+    case "addCategory": {
+      const name = cleanCategory(action.name);
+      if (!name || vault.categories.includes(name)) return vault;
+      const next = { ...vault, categories: [...vault.categories, name] };
+      return action.parent && vault.categories.includes(action.parent)
+        ? withParents(next, { ...vault.parents, [name]: action.parent })
+        : next;
     }
-    case "removeCategory":
-      // Nothing is lost: the category's marks fall back to the inbox.
-      return {
-        categories: vault.categories.filter((c) => c !== action.name),
-        marks: vault.marks.map((m) => (m.category === action.name ? { ...m, category: "" } : m)),
-      };
+    case "moveCategory": {
+      const { name, parent } = action;
+      if (!vault.categories.includes(name) || parentOf(vault, name) === parent) return vault;
+      // Into itself, or into its own child, would cut it off from the tree.
+      if (parent && (!vault.categories.includes(parent) || withDescendants(vault, name).has(parent))) {
+        return vault;
+      }
+      return withParents(vault, { ...vault.parents, [name]: parent });
+    }
+    case "renameCategory": {
+      const { from } = action;
+      const to = cleanCategory(action.to);
+      if (!to || to === from) return vault;
+      // Renaming onto an existing name merges the two.
+      const merge = vault.categories.includes(to);
+      const categories = merge
+        ? vault.categories.filter((c) => c !== from)
+        : vault.categories.map((c) => (c === from ? to : c));
+      const parents: Record<string, string> = {};
+      for (const [child, parent] of Object.entries(vault.parents ?? {})) {
+        if (merge && child === from) continue;
+        parents[child === from ? to : child] = parent === from ? to : parent;
+      }
+      // Merged into a folder that was inside it, that folder takes its place.
+      if (merge && withDescendants(vault, from).has(to)) parents[to] = parentOf(vault, from);
+      return withParents(
+        {
+          ...vault,
+          categories,
+          marks: vault.marks.map((m) => (m.category === from ? { ...m, category: to } : m)),
+        },
+        parents,
+      );
+    }
+    case "removeCategory": {
+      // Nothing is lost: what was inside moves up a level, to the inbox at the top.
+      const up = parentOf(vault, action.name);
+      const parents = Object.fromEntries(
+        Object.entries(vault.parents ?? {}).map(([child, parent]) => [
+          child,
+          parent === action.name ? up : parent,
+        ]),
+      );
+      return withParents(
+        {
+          ...vault,
+          categories: vault.categories.filter((c) => c !== action.name),
+          marks: vault.marks.map((m) => (m.category === action.name ? { ...m, category: up } : m)),
+        },
+        parents,
+      );
+    }
+    case "setKeyVersion":
+      return { ...vault, keyVersion: action.version };
   }
 }
 
@@ -196,7 +327,15 @@ export function placeholderMark(url: string, category = "", note?: string): Mark
 export function matches(mark: Mark, query: string): boolean {
   const q = query.trim().toLowerCase();
   if (!q) return true;
-  return [mark.title, mark.description, mark.url, mark.note, mark.author?.name, mark.author?.handle]
+  return [
+    mark.title,
+    mark.description,
+    mark.url,
+    mark.note,
+    mark.author?.name,
+    mark.author?.handle,
+    ...(mark.tags ?? []).map((t) => `#${t}`),
+  ]
     .filter(Boolean)
     .some((field) => field!.toLowerCase().includes(q));
 }
@@ -237,18 +376,30 @@ export function parseRequest(body: unknown): VaultRequest | null {
     case "update": {
       if (!id || !b.patch || typeof b.patch !== "object") return null;
       const p = b.patch as Record<string, unknown>;
-      const patch: Partial<Pick<Mark, "category" | "note" | "title">> = {};
+      const patch: MarkPatch = {};
       if (p.category !== undefined) patch.category = cleanCategory(str(p.category, 100) ?? "");
       if (p.note !== undefined) patch.note = str(p.note, 2000)?.trim() ?? "";
+      if (Array.isArray(p.tags)) {
+        patch.tags = cleanTags(p.tags.slice(0, 100).filter((t): t is string => typeof t === "string"));
+      }
       const title = str(p.title, 300)?.trim();
       if (title) patch.title = title;
       return Object.keys(patch).length ? { type: "update", id, patch } : null;
     }
     case "delete":
       return id ? { type: "delete", id } : null;
-    case "addCategory":
+    case "addCategory": {
+      const parent = cleanCategory(str(b.parent, 100) ?? "");
+      return name ? { type: "addCategory", name, ...(parent ? { parent } : {}) } : null;
+    }
     case "removeCategory":
-      return name ? { type: b.type, name } : null;
+      return name ? { type: "removeCategory", name } : null;
+    case "moveCategory":
+      return name && typeof b.parent === "string"
+        ? { type: "moveCategory", name, parent: cleanCategory(str(b.parent, 100) ?? "") }
+        : null;
+    case "resetKey":
+      return { type: "resetKey" };
     case "renameCategory": {
       const from = str(b.from, 100);
       const to = cleanCategory(str(b.to, 100) ?? "");

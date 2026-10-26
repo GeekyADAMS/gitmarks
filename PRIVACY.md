@@ -36,7 +36,8 @@ Nothing about you, in any database. There is none. The only things that persist 
 ## Leaving
 
 Uninstall the app on GitHub: Settings → Applications → Installed GitHub Apps →
-**gitmarks-app** → Configure → Uninstall. That ends every session and every device key at once. Your bookmarks
+**gitmarks-app** → Configure → Uninstall. That ends every session and every device key at once. (To cancel just your
+device keys, say one you shared by mistake, use **Reset key** in Connect instead.) Your bookmarks
 stay in your repo as `data/vault.json`. Delete the repo too if you want them gone.
 
 ## Questions

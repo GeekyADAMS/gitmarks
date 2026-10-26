@@ -82,7 +82,7 @@ export async function installationToken(installation: number, repo: string): Pro
 }
 
 export type SignIn =
-  | { ok: true; claims: Required<Claims> }
+  | { ok: true; claims: Required<Omit<Claims, "k">> }
   | { ok: false; reason: "denied" | "install" | "many" | "public"; installation?: number; repo?: string };
 
 type Installation = { id: number; account?: { id?: number } };
