@@ -1,6 +1,8 @@
-import { useEffect, useId, useMemo, useRef, useState, useSyncExternalStore } from "react";
+import { useEffect, useEffectEvent, useId, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import {
+  ArrowClockwise,
   ArrowUpRight,
+  CaretRight,
   Check,
   Copy,
   FolderPlus,
@@ -54,6 +56,48 @@ type CategoryAction = Extract<
   { type: "addCategory" | "renameCategory" | "removeCategory" | "moveCategory" }
 >;
 let toastId = 0;
+
+/**
+ * How often an open tab picks up saves from other devices. A minute keeps the
+ * phone-to-desktop wait short for one GitHub read, about 60 an hour per visible
+ * tab against a 5,000-an-hour limit. Hidden tabs do not poll; they refresh on
+ * coming back instead.
+ */
+const REFRESH_MS = 60_000;
+
+/** Folders closed in the sidebar, kept per browser. */
+const COLLAPSED = "gitmarks:collapsed";
+const collapsedListeners = new Set<() => void>();
+function readCollapsed(): string {
+  try {
+    return localStorage.getItem(COLLAPSED) ?? "[]";
+  } catch {
+    return "[]";
+  }
+}
+function subscribeCollapsed(listener: () => void) {
+  collapsedListeners.add(listener);
+  return () => void collapsedListeners.delete(listener);
+}
+function writeCollapsed(names: Set<string>) {
+  try {
+    localStorage.setItem(COLLAPSED, JSON.stringify([...names]));
+  } catch {
+    // Private mode without storage: folders still close, just not across reloads.
+  }
+  collapsedListeners.forEach((listener) => listener());
+}
+function useCollapsed(): Set<string> {
+  const json = useSyncExternalStore(subscribeCollapsed, readCollapsed, () => "[]");
+  return useMemo(() => {
+    try {
+      const names: unknown = JSON.parse(json);
+      return new Set(Array.isArray(names) ? names.filter((n) => typeof n === "string") : []);
+    } catch {
+      return new Set<string>();
+    }
+  }, [json]);
+}
 
 // --- Small pure helpers -------------------------------------------------------
 
@@ -156,6 +200,9 @@ export default function Vault({
 
   const queue = useRef(Promise.resolve());
   const nextKey = useRef(0);
+  /** The last request the server has answered; equal to `nextKey` when nothing is in flight. */
+  const doneKey = useRef(0);
+  const [refreshing, setRefreshing] = useState(false);
   const searchRef = useRef<HTMLInputElement>(null);
 
   function notify(message: string, extra: Omit<Toast, "id" | "message"> = {}) {
@@ -188,8 +235,48 @@ export default function Vault({
       if (result.ok && result.vault) setBase(result.vault);
       else notify(result.error ?? "Save failed.", { error: true });
       setPending((p) => p.filter((x) => x.key !== key));
+      doneKey.current = key;
     });
   }
+
+  /**
+   * Loads the vault again, for saves made on other devices. A save of this
+   * page's own wins: no refresh starts while one is in flight, and one that
+   * starts during the refresh makes it discard what it read.
+   */
+  async function refresh(quiet = false) {
+    const started = nextKey.current;
+    if (doneKey.current !== started) return;
+    if (!quiet) setRefreshing(true);
+    try {
+      const res = await fetch("/api/vault", { cache: "no-store" });
+      if (res.status === 404) throw new Error("Signed out. Reload to sign in again.");
+      const result = (await res.json()) as { ok?: boolean; vault?: VaultData; error?: string };
+      if (!result.ok || !result.vault) throw new Error(result.error);
+      if (nextKey.current === started) setBase(result.vault);
+    } catch (error) {
+      if (!quiet) {
+        notify(error instanceof Error && error.message ? error.message : "Could not refresh.", {
+          error: true,
+        });
+      }
+    } finally {
+      setRefreshing(false);
+    }
+  }
+
+  // Every minute while the tab is in view, and straight away on coming back to it.
+  const backgroundRefresh = useEffectEvent(() => {
+    if (document.visibilityState === "visible") void refresh(true);
+  });
+  useEffect(() => {
+    const timer = setInterval(backgroundRefresh, REFRESH_MS);
+    document.addEventListener("visibilitychange", backgroundRefresh);
+    return () => {
+      clearInterval(timer);
+      document.removeEventListener("visibilitychange", backgroundRefresh);
+    };
+  }, []);
 
   const targetCategory = view.kind === "category" ? view.name : "";
 
@@ -463,6 +550,20 @@ export default function Vault({
                   /
                 </kbd>
               </label>
+              <button
+                type="button"
+                aria-label="Refresh"
+                title="Refresh"
+                onClick={() => refresh()}
+                disabled={refreshing}
+                className="flex h-10 w-10 cursor-pointer items-center justify-center rounded-xl border border-line bg-surface-raised text-ink-muted transition-colors hover:text-ink disabled:cursor-default"
+              >
+                <ArrowClockwise
+                  size={16}
+                  aria-hidden="true"
+                  className={refreshing ? "motion-safe:animate-spin" : ""}
+                />
+              </button>
               <ConnectButton deviceKey={key} hosted={hosted} onReset={resetKey} />
               <button
                 type="button"
@@ -615,6 +716,13 @@ function Sidebar({
   /** Where a new category is being typed: `""` at the top level, or inside that folder. */
   const [adding, setAdding] = useState<string | null>(null);
   const [editing, setEditing] = useState<string | null>(null);
+  const collapsed = useCollapsed();
+
+  function toggle(name: string) {
+    const next = new Set(collapsed);
+    if (!next.delete(name)) next.add(name);
+    writeCollapsed(next);
+  }
 
   const isActive = (v: View) =>
     v.kind === view.kind && (v.kind !== "category" || (view.kind === "category" && v.name === view.name));
@@ -638,7 +746,14 @@ function Sidebar({
   );
 
   const rows: React.ReactNode[] = [];
+  /** Below a closed folder, everything deeper than it is skipped. */
+  let closedAt = Infinity;
   tree.forEach(({ name, depth }, i) => {
+    if (depth > closedAt) return;
+    closedAt = Infinity;
+    const hasChildren = (tree[i + 1]?.depth ?? -1) > depth;
+    const open = !collapsed.has(name);
+    if (hasChildren && !open) closedAt = depth;
     const indent = depthVar(depth);
     if (editing === name) {
       const inside = withDescendants(vault, name);
@@ -667,6 +782,7 @@ function Sidebar({
             onSubfolder={() => {
               setEditing(null);
               setAdding(name);
+              if (!open) toggle(name);
             }}
           />
         </li>,
@@ -677,7 +793,8 @@ function Sidebar({
           key={name}
           label={name}
           style={indent}
-          icon={<Dot name={name} />}
+          icon={hasChildren ? null : <Dot name={name} />}
+          folder={hasChildren ? { open, onToggle: () => toggle(name), hue: hue(name) } : undefined}
           count={counts.get(name) ?? 0}
           active={isActive({ kind: "category", name })}
           onClick={() => onView({ kind: "category", name })}
@@ -808,6 +925,7 @@ function Row({
   onDropUrls,
   onDropCategory,
   style,
+  folder,
 }: {
   label: string;
   icon: React.ReactNode;
@@ -822,6 +940,8 @@ function Row({
   /** Another category dropped here goes inside this one. */
   onDropCategory?: (name: string) => void;
   style?: React.CSSProperties;
+  /** A folder with folders inside, which opens and closes. Its caret sits where the dot would. */
+  folder?: { open: boolean; onToggle: () => void; hue: number };
 }) {
   const [over, setOver] = useState(false);
   const droppable = Boolean(onDropMark);
@@ -891,6 +1011,23 @@ function Row({
           className="absolute right-1.5 top-1/2 hidden h-6 w-6 -translate-y-1/2 cursor-pointer items-center justify-center rounded-md text-ink-muted opacity-0 transition-opacity hover:text-ink focus-visible:opacity-100 group-hover/row:opacity-100 md:flex"
         >
           <PencilSimple size={13} aria-hidden="true" />
+        </button>
+      )}
+      {folder && (
+        <button
+          type="button"
+          onClick={folder.onToggle}
+          aria-expanded={folder.open}
+          aria-label={`${folder.open ? "Close" : "Open"} ${label}`}
+          className="absolute left-[9px] top-1/2 flex h-6 w-6 -translate-y-1/2 cursor-pointer items-center justify-center rounded-md hover:bg-surface-sunken md:left-[calc(var(--depth)*14px_+_9px)]"
+          style={{ color: `oklch(0.62 0.15 ${folder.hue})` }}
+        >
+          <CaretRight
+            size={12}
+            weight="bold"
+            aria-hidden="true"
+            className={`transition-transform ${folder.open ? "rotate-90" : ""}`}
+          />
         </button>
       )}
     </li>

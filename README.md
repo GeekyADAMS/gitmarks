@@ -54,8 +54,8 @@ export come free from git.
 
 - **Rich previews.** Posts on X show text, author and media. Everything else shows its card image, title and description.
 - **Search that shows its work.** Matches are highlighted in the title, the text, your notes and the author.
-- **Instant.** Every change appears at once, then settles on the server's answer.
-- **Folders inside folders.** Drag one category onto another to nest it. A folder shows everything inside it.
+- **Instant.** Every change appears at once, then settles on the server's answer. Saves from your other devices show up within a minute, or at once with Refresh.
+- **Folders inside folders.** Drag one category onto another to nest it. A folder shows everything inside it, and closes in the sidebar with its arrow.
 - **Tags.** Add as many as you like to any card, then click one to see everything that has it, across every category.
 - **Undo** on every move and delete. Notes on any card. Rename and merge categories.
 - **Reset your key** from Connect if it ever leaks. Every old key stops working at once.
