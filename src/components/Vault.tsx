@@ -1106,7 +1106,8 @@ function Empty({ view, searching, hasAny }: { view: View; searching: boolean; ha
 // --- Connecting devices -------------------------------------------------------
 
 export const SHORTCUT_LINK = "https://www.icloud.com/shortcuts/6d21e0a023ad4bcf9dab29756d07253f";
-export const EXTENSION_LINK = "https://chromewebstore.google.com/detail/gitmarks/alnhmhklodcajljkfbonfhkbeaedkalf";
+export const EXTENSION_LINK =
+  "https://chromewebstore.google.com/detail/gitmarks/alnhmhklodcajljkfbonfhkbeaedkalf";
 
 /**
  * A bookmark whose address is a script: on any page, it opens this site's
