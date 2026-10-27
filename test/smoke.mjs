@@ -135,6 +135,32 @@ console.log("configured");
     assert.equal((await res.json()).ok, true);
   });
 
+  await check("a note saves with its formatting, and nothing in it can run", async () => {
+    const res = await fetch(`${base}/api/vault`, {
+      method: "POST",
+      headers: { cookie, "content-type": "application/json", origin: base },
+      body: JSON.stringify({
+        type: "saveNote",
+        note: {
+          id: "smoke-note",
+          title: "List",
+          html: '<ul><li><b>milk</b></li></ul><img src=x onerror="alert(1)"><script>alert(2)</script>',
+        },
+      }),
+    });
+    const body = await res.json();
+    assert.equal(body.ok, true);
+    const note = body.vault.notes.find((n) => n.id === "smoke-note");
+    assert.equal(note.html, "<ul><li><b>milk</b></li></ul>");
+    assert.ok(note.createdAt && note.updatedAt);
+    const gone = await fetch(`${base}/api/vault`, {
+      method: "POST",
+      headers: { cookie, "content-type": "application/json", origin: base },
+      body: JSON.stringify({ type: "deleteNote", id: "smoke-note" }),
+    });
+    assert.deepEqual((await gone.json()).vault.notes, []);
+  });
+
   await check("the Shortcut's request saves, and an internal address is never fetched", async () => {
     const res = await fetch(`${base}/api/vault`, {
       method: "POST",
