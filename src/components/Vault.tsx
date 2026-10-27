@@ -4,6 +4,7 @@ import {
   ArrowUpRight,
   CaretRight,
   Check,
+  CheckSquare,
   Copy,
   FolderPlus,
   Hash,
@@ -13,6 +14,7 @@ import {
   MagnifyingGlass,
   NotePencil,
   Notepad,
+  Palette,
   PushPin,
   Quotes,
   TextB,
@@ -33,6 +35,7 @@ import {
 import {
   MAX_BATCH,
   MAX_TAGS,
+  NOTE_COLORS,
   applyAction,
   categoryTree,
   cleanTag,
@@ -47,6 +50,8 @@ import {
   type Mark,
   type MarkPatch,
   type Note,
+  type NoteColor,
+  type NoteInput,
   type Vault as VaultData,
   type VaultAction,
   type VaultRequest,
@@ -177,7 +182,20 @@ function intoColumns<T>(items: T[], count: number, height: (item: T) => number):
 /** A card's rough height, enough to keep the columns even. */
 const markHeight = (mark: Mark) =>
   120 + (mark.image ? 190 : 0) + Math.min(mark.description.length, 420) / 2.2;
-const noteHeight = (note: Note) => 80 + Math.min(note.html.length, 900) / 3;
+const noteHeight = (note: Note) => 110 + Math.min(note.html.length, 900) / 3;
+
+/** Links and notes in one list, newest first, each keeping its own order. */
+function byDate(marks: Mark[], notes: Note[]): (Mark | Note)[] {
+  const out: (Mark | Note)[] = [];
+  let i = 0;
+  let j = 0;
+  while (i < marks.length || j < notes.length) {
+    if (j >= notes.length || (i < marks.length && marks[i].createdAt >= notes[j].createdAt))
+      out.push(marks[i++]);
+    else out.push(notes[j++]);
+  }
+  return out;
+}
 
 const isTyping = (target: EventTarget | null) =>
   target instanceof HTMLElement &&
@@ -300,17 +318,28 @@ export default function Vault({
 
   const targetCategory = view.kind === "category" ? view.name : "";
 
-  function newNote() {
+  /** A new note goes in the category being looked at. */
+  function newNote(category = targetCategory) {
     const now = new Date().toISOString();
-    setOpenNote({ id: crypto.randomUUID(), title: "", html: "", createdAt: now, updatedAt: now });
+    setOpenNote({
+      id: crypto.randomUUID(),
+      title: "",
+      html: "",
+      ...(category ? { category } : {}),
+      createdAt: now,
+      updatedAt: now,
+    });
   }
 
   function saveNote(note: Note) {
-    const input = {
+    const input: NoteInput = {
       id: note.id,
       title: note.title.trim(),
       html: note.html,
       ...(note.pinned ? { pinned: true } : {}),
+      ...(note.category ? { category: note.category } : {}),
+      ...(note.tags?.length ? { tags: note.tags } : {}),
+      ...(note.color ? { color: note.color } : {}),
     };
     send({ type: "saveNote", note: input }, [
       { type: "putNote", note: { ...input, createdAt: note.createdAt, updatedAt: new Date().toISOString() } },
@@ -322,8 +351,24 @@ export default function Vault({
     notify("Note deleted", { undo: () => saveNote(note) });
   }
 
+  function moveNote(note: Note, category: string) {
+    if ((note.category ?? "") === category) return;
+    saveNote({ ...note, category });
+    notify(`Moved to ${category || "no category"}`, { undo: () => saveNote(note) });
+  }
+
+  /** Ticks a checklist item on a card, without opening the note. */
+  function toggleItem(note: Note, index: number) {
+    const copy = document.createElement("template");
+    copy.innerHTML = note.html;
+    const item = copy.content.querySelectorAll('ul[data-type="checklist"] > li')[index];
+    if (!item) return;
+    item.setAttribute("data-checked", item.getAttribute("data-checked") === "true" ? "false" : "true");
+    saveNote({ ...note, html: copy.innerHTML });
+  }
+
   /** The editor closed: keep what changed. A note left empty is not kept. */
-  function closeNote(before: Note, after: Pick<Note, "title" | "html" | "pinned">, changed: boolean) {
+  function closeNote(before: Note, after: NoteEdit, changed: boolean) {
     setOpenNote(null);
     if (!changed) return;
     const exists = vault.notes?.some((n) => n.id === before.id);
@@ -464,6 +509,8 @@ export default function Vault({
   const counts = useMemo(() => {
     const own = new Map<string, number>();
     for (const m of vault.marks) own.set(m.category, (own.get(m.category) ?? 0) + 1);
+    // Notes count in their category; a note in none is not in the inbox.
+    for (const n of vault.notes ?? []) if (n.category) own.set(n.category, (own.get(n.category) ?? 0) + 1);
     const map = new Map<string, number>([["", own.get("") ?? 0]]);
     for (const name of vault.categories) {
       let n = 0;
@@ -475,9 +522,11 @@ export default function Vault({
 
   const tags = useMemo(() => {
     const map = new Map<string, number>();
-    for (const m of vault.marks) for (const t of m.tags ?? []) map.set(t, (map.get(t) ?? 0) + 1);
+    for (const item of [...vault.marks, ...(vault.notes ?? [])]) {
+      for (const t of item.tags ?? []) map.set(t, (map.get(t) ?? 0) + 1);
+    }
     return [...map].sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]));
-  }, [vault.marks]);
+  }, [vault.marks, vault.notes]);
 
   // A tag nobody has any more stops filtering.
   const activeTag = tag && tags.some(([t]) => t === tag) ? tag : null;
@@ -525,9 +574,34 @@ export default function Vault({
     () => columnsFor(window.innerWidth),
     () => 3,
   );
-  const columns = intoColumns(shown, columnCount, markHeight);
   const notes = vault.notes ?? [];
-  const shownNotes = notes.filter((n) => noteMatches(n, query));
+  // Notes show in their category and in Everything, never in the inbox.
+  const shownNotes = notes.filter(
+    (n) =>
+      view.kind !== "inbox" &&
+      (view.kind !== "category" || inView.has(n.category ?? "")) &&
+      (!activeTag || n.tags?.includes(activeTag)) &&
+      noteMatches(n, query),
+  );
+  const items = byDate(shown, shownNotes);
+  const columns = intoColumns(items, columnCount, (item) =>
+    "url" in item ? markHeight(item) : noteHeight(item),
+  );
+
+  const noteCard = (note: Note) => (
+    <NoteCard
+      key={note.id}
+      note={note}
+      tree={tree}
+      showCategory={activeView.kind !== "category" || note.category !== activeView.name}
+      onOpen={() => setOpenNote(note)}
+      onPin={() => saveNote({ ...note, pinned: !note.pinned })}
+      onDelete={() => removeNote(note)}
+      onMove={(c) => moveNote(note, c)}
+      onTag={setTag}
+      onToggleItem={(i) => toggleItem(note, i)}
+    />
+  );
 
   // A category renamed or removed out from under the open view falls back to all.
   const activeView: View =
@@ -544,16 +618,15 @@ export default function Vault({
           onDropMark={(id, category) => {
             const mark = vault.marks.find((m) => m.id === id);
             if (mark) move(mark, category);
+            const note = notes.find((n) => n.id === id);
+            if (note) moveNote(note, category);
           }}
           onDropUrls={(urls, category) => add(urls, category)}
           onCategory={categoryAction}
           tree={tree}
           tags={tags}
           activeTag={activeTag}
-          onTag={(t) => {
-            setTag(t);
-            if (view.kind === "notes") setView({ kind: "all" });
-          }}
+          onTag={setTag}
           noteCount={notes.length}
         />
 
@@ -571,12 +644,16 @@ export default function Vault({
               </h1>
               <p className="mt-2 flex flex-wrap items-center gap-2 font-mono text-xs tabular-nums text-ink-muted">
                 <span>
-                  {activeView.kind === "notes"
-                    ? `${shownNotes.length} ${shownNotes.length === 1 ? "note" : "notes"}`
-                    : `${shown.length} ${shown.length === 1 ? "link" : "links"}`}
+                  {[
+                    activeView.kind !== "notes" && `${shown.length} ${shown.length === 1 ? "link" : "links"}`,
+                    (activeView.kind === "notes" || shownNotes.length > 0) &&
+                      `${shownNotes.length} ${shownNotes.length === 1 ? "note" : "notes"}`,
+                  ]
+                    .filter(Boolean)
+                    .join(" · ")}
                   {query && ` matching “${query}”`}
                 </span>
-                {activeTag && activeView.kind !== "notes" && (
+                {activeTag && (
                   <button
                     type="button"
                     onClick={() => setTag(null)}
@@ -649,43 +726,45 @@ export default function Vault({
             <Notes
               notes={shownNotes}
               columnCount={columnCount}
-              searching={Boolean(query)}
-              onNew={newNote}
-              onOpen={setOpenNote}
-              onPin={(note) => saveNote({ ...note, pinned: !note.pinned })}
-              onDelete={removeNote}
+              searching={Boolean(query || activeTag)}
+              onNew={() => newNote("")}
+              card={noteCard}
             />
           ) : (
             <>
-              <AddBar category={targetCategory} onAdd={add} />
+              <AddBar category={targetCategory} onAdd={add} onNote={() => newNote()} />
 
-              {shown.length === 0 ? (
+              {items.length === 0 ? (
                 <Empty
                   view={activeView}
                   searching={Boolean(query || activeTag)}
-                  hasAny={vault.marks.length > 0}
+                  hasAny={vault.marks.length + notes.length > 0}
                 />
               ) : (
                 <div className="mt-2 flex items-start gap-4">
                   {columns.map((column, i) => (
                     <div key={i} className="flex min-w-0 flex-1 flex-col gap-4">
-                      {column.map((mark) => (
-                        <Card
-                          key={mark.id}
-                          mark={mark}
-                          tree={tree}
-                          allTags={tags}
-                          showCategory={activeView.kind !== "category" || mark.category !== activeView.name}
-                          query={query}
-                          onMove={(c) => move(mark, c)}
-                          onNote={(note) => update(mark, { note })}
-                          onTags={(next) => update(mark, { tags: next })}
-                          onTag={setTag}
-                          onCarry={() => setCarrying(mark)}
-                          onDelete={() => remove(mark)}
-                          onCopied={() => notify("Link copied")}
-                        />
-                      ))}
+                      {column.map((mark) =>
+                        !("url" in mark) ? (
+                          noteCard(mark)
+                        ) : (
+                          <Card
+                            key={mark.id}
+                            mark={mark}
+                            tree={tree}
+                            allTags={tags}
+                            showCategory={activeView.kind !== "category" || mark.category !== activeView.name}
+                            query={query}
+                            onMove={(c) => move(mark, c)}
+                            onNote={(note) => update(mark, { note })}
+                            onTags={(next) => update(mark, { tags: next })}
+                            onTag={setTag}
+                            onCarry={() => setCarrying(mark)}
+                            onDelete={() => remove(mark)}
+                            onCopied={() => notify("Link copied")}
+                          />
+                        ),
+                      )}
                     </div>
                   ))}
                 </div>
@@ -700,6 +779,8 @@ export default function Vault({
           key={openNote.id}
           note={openNote}
           isNew={!notes.some((n) => n.id === openNote.id)}
+          tree={tree}
+          allTags={tags.map(([t]) => t)}
           onClose={(after, changed) => closeNote(openNote, after, changed)}
           onDelete={() => {
             setOpenNote(null);
@@ -778,6 +859,25 @@ export default function Vault({
         .note-body li + li { margin-top: .15em }
         .note-body blockquote { border-left: 3px solid var(--line-strong); padding-left: .8em; color: var(--ink-muted) }
         .note-body b, .note-body strong { font-weight: 600 }
+        .note-body a { text-decoration: underline; text-underline-offset: 2px; cursor: pointer }
+        /* On a card, clicks fall through to the card (which opens it, or ticks a box),
+           except on links, which sit above it. */
+        .note-card-body { pointer-events: none }
+        .note-card-body a { position: relative; z-index: 1; pointer-events: auto }
+        .note-body ul[data-type=checklist] { list-style: none; padding-left: 0 }
+        .note-body ul[data-type=checklist] > li { position: relative; padding-left: 1.6em }
+        .note-body ul[data-type=checklist] > li::before {
+          content: ""; position: absolute; left: .1em; top: .3em; width: 1.05em; height: 1.05em;
+          border: 1.5px solid var(--ink-muted); border-radius: .3em; cursor: pointer;
+        }
+        .note-body ul[data-type=checklist] > li[data-checked=true] { color: var(--ink-muted); text-decoration: line-through }
+        .note-body ul[data-type=checklist] > li[data-checked=true]::before { background: var(--ink); border-color: var(--ink) }
+        .note-body ul[data-type=checklist] > li[data-checked=true]::after {
+          content: ""; position: absolute; left: .47em; top: .45em; width: .32em; height: .58em;
+          border: solid var(--surface); border-width: 0 2px 2px 0; transform: rotate(45deg);
+        }
+        .note-tint { background: oklch(0.955 calc(var(--note-c) * 0.055) var(--note-h)); border-color: oklch(0.87 calc(var(--note-c) * 0.07) var(--note-h)) }
+        .dark .note-tint { background: oklch(0.3 calc(var(--note-c) * 0.05) var(--note-h)); border-color: oklch(0.4 calc(var(--note-c) * 0.06) var(--note-h)) }
         @media (prefers-reduced-motion: reduce) {
           .vault-toast, .vault-card, .vault-shimmer { animation: none }
         }
@@ -877,7 +977,7 @@ function Sidebar({
               const up = parentOf(vault, name);
               onView(up ? { kind: "category", name: up } : { kind: "inbox" });
             }}
-            removeHint={`Its links move to ${parentOf(vault, name) || "the inbox"}.`}
+            removeHint={`Its links move to ${parentOf(vault, name) || "the inbox"}, and its notes ${parentOf(vault, name) ? "too" : "out of any category"}.`}
             parent={parentOf(vault, name)}
             parents={tree.filter((t) => !inside.has(t.name))}
             onParent={(parent) => nest(name, parent)}
@@ -931,7 +1031,7 @@ function Sidebar({
         <Row
           label="Everything"
           icon={<SquaresFour size={15} aria-hidden="true" />}
-          count={vault.marks.length}
+          count={vault.marks.length + noteCount}
           active={isActive({ kind: "all" })}
           onClick={() => onView({ kind: "all" })}
         />
@@ -1258,7 +1358,16 @@ function CategoryInput({
 
 // --- Adding ------------------------------------------------------------------
 
-function AddBar({ category, onAdd }: { category: string; onAdd: (urls: string[]) => boolean }) {
+function AddBar({
+  category,
+  onAdd,
+  onNote,
+}: {
+  category: string;
+  onAdd: (urls: string[]) => boolean;
+  /** Writes a note here instead. */
+  onNote: () => void;
+}) {
   const [value, setValue] = useState("");
   const [invalid, setInvalid] = useState(false);
 
@@ -1307,6 +1416,16 @@ function AddBar({ category, onAdd }: { category: string; onAdd: (urls: string[])
           className="h-10 cursor-pointer rounded-xl bg-ink px-4 text-[14px] font-medium text-surface transition-opacity disabled:cursor-default disabled:opacity-30"
         >
           Save
+        </button>
+        <button
+          type="button"
+          onClick={onNote}
+          title={`Write a note${category ? ` in ${category}` : ""}`}
+          className="flex h-10 cursor-pointer items-center gap-1.5 rounded-xl border border-line px-3 text-[14px] text-ink-muted transition-colors hover:border-line-strong hover:text-ink"
+        >
+          <NotePencil size={16} aria-hidden="true" />
+          <span className="hidden sm:inline">Note</span>
+          <span className="sr-only sm:hidden">Write a note</span>
         </button>
       </label>
       <p id="vault-add-error" className="mt-2 min-h-5 px-1 text-[13px] text-ink-muted">
@@ -1630,12 +1749,15 @@ function CategoryPicker({
   tree,
   onMove,
   quiet = false,
+  none = "Inbox",
 }: {
   current: string;
   tree: Tree;
   /** Moving to a name that does not exist yet creates it. */
   onMove: (category: string) => void;
   quiet?: boolean;
+  /** What no category is called: the inbox for links, nothing for notes. */
+  none?: string;
 }) {
   return (
     <span
@@ -1643,8 +1765,8 @@ function CategoryPicker({
         quiet ? "border-transparent text-ink-muted" : "border-line text-ink"
       }`}
     >
-      {current ? <Dot name={current} /> : <Tray size={12} aria-hidden="true" />}
-      <span className="truncate">{current || "Inbox"}</span>
+      {current ? <Dot name={current} /> : none === "Inbox" && <Tray size={12} aria-hidden="true" />}
+      <span className="truncate">{current || none}</span>
       <select
         aria-label="Move to category"
         value={current}
@@ -1654,7 +1776,7 @@ function CategoryPicker({
         }}
         className="absolute inset-0 cursor-pointer opacity-0"
       >
-        <option value="">Inbox</option>
+        <option value="">{none}</option>
         {tree.map((c) => (
           <option key={c.name} value={c.name}>
             {"\u00a0\u00a0\u00a0".repeat(c.depth)}
@@ -1888,23 +2010,63 @@ function Empty({ view, searching, hasAny }: { view: View; searching: boolean; ha
 
 // --- Notes -------------------------------------------------------------------
 
+const NOTE_HUES: Record<NoteColor, number> = {
+  red: 25,
+  orange: 55,
+  yellow: 95,
+  green: 145,
+  teal: 190,
+  blue: 245,
+  purple: 295,
+  pink: 345,
+  gray: 0,
+};
+
+/** A note's colour, as the variables `.note-tint` reads; the shades follow light and dark. */
+const tint = (color: NoteColor) =>
+  ({ "--note-h": NOTE_HUES[color], "--note-c": color === "gray" ? 0 : 1 }) as React.CSSProperties;
+
+const CHECKLIST = 'ul[data-type="checklist"]';
+
+/**
+ * Which checklist item's box sits under a point, if any: the box is drawn in
+ * the item's left padding, so it is the first 1.6em of the item.
+ */
+function checkboxAt(root: Element, x: number, y: number): number | null {
+  const items = [...root.querySelectorAll<HTMLElement>(`${CHECKLIST} > li`)];
+  const i = items.findIndex((li) => {
+    const r = li.getBoundingClientRect();
+    const em = parseFloat(getComputedStyle(li).fontSize);
+    return y >= r.top && y <= r.bottom && x >= r.left && x <= r.left + em * 1.6;
+  });
+  return i < 0 ? null : i;
+}
+
+/** What a person typed as a link, made into one a note may hold, or null. */
+function linkHref(input: string | null): string | null {
+  const text = input?.trim();
+  if (!text) return null;
+  try {
+    const url = new URL(/^[a-z][a-z\d+.-]*:/i.test(text) ? text : `https://${text}`);
+    return ["http:", "https:", "mailto:"].includes(url.protocol) ? url.href : null;
+  } catch {
+    return null;
+  }
+}
+
 /** The note grid: a bar to start one, then pinned notes, then the rest. */
 function Notes({
   notes,
   columnCount,
   searching,
   onNew,
-  onOpen,
-  onPin,
-  onDelete,
+  card,
 }: {
   notes: Note[];
   columnCount: number;
   searching: boolean;
   onNew: () => void;
-  onOpen: (note: Note) => void;
-  onPin: (note: Note) => void;
-  onDelete: (note: Note) => void;
+  card: (note: Note) => React.ReactNode;
 }) {
   const pinned = notes.filter((n) => n.pinned);
   const others = notes.filter((n) => !n.pinned);
@@ -1913,15 +2075,7 @@ function Notes({
     <div className="flex items-start gap-4">
       {intoColumns(list, columnCount, noteHeight).map((column, i) => (
         <div key={i} className="flex min-w-0 flex-1 flex-col gap-4">
-          {column.map((note) => (
-            <NoteCard
-              key={note.id}
-              note={note}
-              onOpen={() => onOpen(note)}
-              onPin={() => onPin(note)}
-              onDelete={() => onDelete(note)}
-            />
-          ))}
+          {column.map(card)}
         </div>
       ))}
     </div>
@@ -1971,48 +2125,147 @@ function Notes({
 
 function NoteCard({
   note,
+  tree,
+  showCategory,
   onOpen,
   onPin,
   onDelete,
+  onMove,
+  onTag,
+  onToggleItem,
 }: {
   note: Note;
+  tree: Tree;
+  showCategory: boolean;
   onOpen: () => void;
   onPin: () => void;
   onDelete: () => void;
+  onMove: (category: string) => void;
+  onTag: (tag: string) => void;
+  /** Ticks or unticks the checklist item with this index, without opening the note. */
+  onToggleItem: (index: number) => void;
 }) {
   const long = note.html.length > 700;
+  const category = note.category ?? "";
   return (
-    <article className="vault-card group/note relative rounded-2xl border border-line bg-surface-raised p-4 shadow-[0_1px_2px_rgba(0,0,0,0.03)] transition-colors hover:border-line-strong">
-      {/* The whole card opens the note; the buttons sit above this. */}
+    <article
+      draggable
+      onDragStart={(e) => {
+        e.dataTransfer.setData(DRAG_TYPE, note.id);
+        e.dataTransfer.effectAllowed = "move";
+      }}
+      style={note.color ? tint(note.color) : undefined}
+      className={`vault-card group/note relative rounded-2xl border p-4 shadow-[0_1px_2px_rgba(0,0,0,0.03)] transition-colors ${
+        note.color ? "note-tint" : "border-line bg-surface-raised hover:border-line-strong"
+      }`}
+    >
+      {/* The whole card opens the note, except a checklist's boxes, which tick.
+          The links and buttons sit above this. */}
       <button
         type="button"
-        onClick={onOpen}
-        aria-label={`Open note: ${note.title || noteText(note.html).slice(0, 60)}`}
+        onClick={(e) => {
+          const item = checkboxAt(e.currentTarget.parentElement!, e.clientX, e.clientY);
+          if (item === null) onOpen();
+          else onToggleItem(item);
+        }}
+        aria-label={`Open note: ${note.title || noteText(note.html).slice(0, 60) || "untitled"}`}
         className="absolute inset-0 cursor-pointer rounded-2xl"
       />
-      {note.title && <h3 className="pr-16 font-medium leading-snug">{note.title}</h3>}
+      {note.pinned && (
+        <PushPin
+          size={13}
+          weight="fill"
+          aria-label="Pinned"
+          className="absolute right-3.5 top-4 text-ink-muted"
+        />
+      )}
+      {note.title && <h3 className="pr-6 font-medium leading-snug">{note.title}</h3>}
+      {/* Links in a note open in a new tab, even before the server has added the target. */}
+      {/* eslint-disable-next-line jsx-a11y/click-events-have-key-events, jsx-a11y/no-static-element-interactions */}
       <div
-        className={`note-body mt-1.5 max-h-72 overflow-hidden break-words text-[14px] leading-relaxed ${
-          note.title ? "" : "pr-16"
+        onClick={(e) => {
+          const link = (e.target as Element).closest<HTMLAnchorElement>("a[href]");
+          if (!link) return;
+          e.preventDefault();
+          window.open(link.href, "_blank", "noopener,noreferrer");
+        }}
+        className={`note-body note-card-body mt-1.5 max-h-72 overflow-hidden break-words text-[14px] leading-relaxed ${
+          note.title ? "" : "pr-6"
         } ${long ? "[mask-image:linear-gradient(to_bottom,black_75%,transparent)]" : ""}`}
         // Cleaned by the server against an allowlist on the way in and out.
         dangerouslySetInnerHTML={{ __html: note.html }}
       />
-      <p className="mt-3 font-mono text-[11px] text-ink-muted">{ago(note.updatedAt)}</p>
-      <div className="absolute right-2 top-2 flex gap-0.5 opacity-0 transition-opacity focus-within:opacity-100 group-hover/note:opacity-100 pointer-coarse:opacity-100">
-        <IconButton label={note.pinned ? "Unpin" : "Pin"} onClick={onPin}>
-          <PushPin size={14} weight={note.pinned ? "fill" : "regular"} aria-hidden="true" />
-        </IconButton>
-        <IconButton label="Delete note" onClick={onDelete} danger>
-          <Trash size={14} aria-hidden="true" />
-        </IconButton>
-      </div>
+      {note.tags && (
+        <ul className="relative z-10 mt-3 flex flex-wrap gap-1.5">
+          {note.tags.map((t) => (
+            <li key={t}>
+              <button
+                type="button"
+                onClick={() => onTag(t)}
+                title={`Show everything tagged #${t}`}
+                className="cursor-pointer rounded-md bg-surface-sunken/70 px-1.5 py-0.5 font-mono text-[11.5px] text-ink-muted transition-colors hover:text-ink"
+              >
+                #{t}
+              </button>
+            </li>
+          ))}
+        </ul>
+      )}
+      <footer className="relative z-10 mt-3 flex items-center gap-1">
+        <CategoryPicker
+          current={category}
+          tree={tree}
+          onMove={onMove}
+          none="No category"
+          quiet={!showCategory || !category}
+        />
+        <time
+          dateTime={note.updatedAt}
+          suppressHydrationWarning
+          className="ml-1 font-mono text-[11px] tabular-nums text-ink-muted"
+        >
+          {ago(note.updatedAt)}
+        </time>
+        <div className="ml-auto flex items-center opacity-100 transition-opacity md:opacity-0 md:group-hover/note:opacity-100 md:group-focus-within/note:opacity-100">
+          <IconButton label={note.pinned ? "Unpin" : "Pin"} onClick={onPin}>
+            <PushPin size={14} weight={note.pinned ? "fill" : "regular"} aria-hidden="true" />
+          </IconButton>
+          <IconButton label="Delete note" onClick={onDelete} danger>
+            <Trash size={14} aria-hidden="true" />
+          </IconButton>
+        </div>
+      </footer>
     </article>
   );
 }
 
+/** The colours, plus none: picked in the note, and shown on its card and in the editor. */
+function Swatches({ value, onChange }: { value?: NoteColor; onChange: (color?: NoteColor) => void }) {
+  return (
+    <div role="group" aria-label="Colour" className="flex flex-wrap gap-2">
+      {[undefined, ...NOTE_COLORS].map((color) => (
+        <button
+          key={color ?? "none"}
+          type="button"
+          aria-label={color ? `${color[0].toUpperCase()}${color.slice(1)}` : "No colour"}
+          title={color ? `${color[0].toUpperCase()}${color.slice(1)}` : "No colour"}
+          aria-pressed={value === color}
+          onClick={() => onChange(color)}
+          style={color ? tint(color) : undefined}
+          className={`flex h-7 w-7 cursor-pointer items-center justify-center rounded-full border ${
+            color ? "note-tint" : "border-line-strong bg-surface text-ink-muted"
+          } ${value === color ? "outline-2 outline-offset-2 outline-ink" : ""}`}
+        >
+          {!color && <X size={12} aria-hidden="true" />}
+          {color && value === color && <Check size={12} weight="bold" aria-hidden="true" />}
+        </button>
+      ))}
+    </div>
+  );
+}
+
 type Tool = { label: string; icon: React.ReactNode; keys?: string } & (
-  { command: string } | { block: "h2" | "blockquote" }
+  { command: string } | { block: "h2" | "blockquote" } | { special: "checklist" | "link" }
 );
 
 const TOOLS: Tool[] = [
@@ -2040,8 +2293,12 @@ const TOOLS: Tool[] = [
     command: "insertOrderedList",
     icon: <ListNumbers size={16} aria-hidden="true" />,
   },
+  { label: "Checklist", special: "checklist", icon: <CheckSquare size={16} aria-hidden="true" /> },
   { label: "Quote", block: "blockquote", icon: <Quotes size={16} aria-hidden="true" /> },
+  { label: "Link", special: "link", icon: <LinkSimple size={16} aria-hidden="true" /> },
 ];
+
+type NoteEdit = Pick<Note, "title" | "html" | "pinned" | "category" | "tags" | "color">;
 
 /**
  * Writing a note. The body is the browser's own rich text editing, so there is
@@ -2051,13 +2308,17 @@ const TOOLS: Tool[] = [
 function NoteDialog({
   note,
   isNew,
+  tree,
+  allTags,
   onClose,
   onDelete,
 }: {
   note: Note;
   isNew: boolean;
+  tree: Tree;
+  allTags: string[];
   /** `changed` is false when nothing was touched, so opening a note to read it saves nothing. */
-  onClose: (after: Pick<Note, "title" | "html" | "pinned">, changed: boolean) => void;
+  onClose: (after: NoteEdit, changed: boolean) => void;
   onDelete: () => void;
 }) {
   const dialog = useRef<HTMLDialogElement>(null);
@@ -2067,33 +2328,117 @@ function NoteDialog({
   const downOnBackdrop = useRef(false);
   const [title, setTitle] = useState(note.title);
   const [pinned, setPinned] = useState(Boolean(note.pinned));
+  const [category, setCategory] = useState(note.category ?? "");
+  const [tags, setTags] = useState(note.tags ?? []);
+  const [color, setColor] = useState(note.color);
+  const [editingTags, setEditingTags] = useState(false);
+  const [palette, setPalette] = useState(false);
   const [empty, setEmpty] = useState(!noteText(note.html));
   const [active, setActive] = useState<Set<string>>(new Set());
 
+  /** The element around the caret, if the caret is in the editor. */
+  function caret(): Element | null {
+    const node = document.getSelection()?.anchorNode;
+    const el = node instanceof Element ? node : (node?.parentElement ?? null);
+    return el && editor.current?.contains(el) ? el : null;
+  }
+
   function refreshTools() {
-    const el = editor.current;
-    const anchor = document.getSelection()?.anchorNode;
-    if (!el || !anchor || !el.contains(anchor)) return;
+    const at = caret();
+    if (!at) return;
     const block = document.queryCommandValue("formatBlock").toLowerCase();
+    const inChecklist = Boolean(at.closest(CHECKLIST));
     setActive(
       new Set(
-        TOOLS.filter((t) => ("command" in t ? document.queryCommandState(t.command) : block === t.block)).map(
-          (t) => t.label,
-        ),
+        TOOLS.filter((t) => {
+          if ("special" in t) return t.special === "checklist" ? inChecklist : Boolean(at.closest("a[href]"));
+          if ("block" in t) return block === t.block;
+          if (t.command === "insertUnorderedList")
+            return !inChecklist && document.queryCommandState(t.command);
+          return document.queryCommandState(t.command);
+        }).map((t) => t.label),
       ),
     );
   }
 
-  function edited() {
+  function touched() {
     changed.current = true;
+  }
+
+  function edited() {
+    touched();
+    // Every item on a checklist has a box, ticked or not.
+    editor.current
+      ?.querySelectorAll(`${CHECKLIST} > li:not([data-checked])`)
+      .forEach((li) => li.setAttribute("data-checked", "false"));
     setEmpty(!noteText(editor.current?.innerHTML ?? ""));
     refreshTools();
   }
 
+  function toggleItem(li: Element) {
+    li.setAttribute("data-checked", li.getAttribute("data-checked") === "true" ? "false" : "true");
+    edited();
+  }
+
+  function checklist() {
+    const list = caret()?.closest(CHECKLIST);
+    if (list) {
+      document.execCommand("insertUnorderedList");
+      return;
+    }
+    if (!document.queryCommandState("insertUnorderedList")) document.execCommand("insertUnorderedList");
+    const ul = caret()?.closest("ul");
+    ul?.setAttribute("data-type", "checklist");
+  }
+
+  function link() {
+    const selection = document.getSelection();
+    const current = caret()?.closest("a[href]");
+    if (current && selection) {
+      const range = document.createRange();
+      range.selectNodeContents(current);
+      selection.removeAllRanges();
+      selection.addRange(range);
+      document.execCommand("unlink");
+      return;
+    }
+    // The prompt takes the focus, so the selection is put back after it.
+    const range = selection?.rangeCount ? selection.getRangeAt(0).cloneRange() : null;
+    const typed = window.prompt("Link to");
+    if (typed === null || !range || !selection) return;
+    const href = linkHref(typed);
+    if (!href) {
+      window.alert("That doesn't look like a link. Try one starting with https://");
+      return;
+    }
+    editor.current?.focus();
+    selection.removeAllRanges();
+    selection.addRange(range);
+    if (!range.collapsed) {
+      document.execCommand("createLink", false, href);
+      return;
+    }
+    const a = document.createElement("a");
+    a.href = href;
+    a.textContent = typed.trim();
+    document.execCommand("insertHTML", false, a.outerHTML);
+  }
+
   function apply(tool: Tool) {
     editor.current?.focus();
-    if ("command" in tool) document.execCommand(tool.command);
-    else document.execCommand("formatBlock", false, active.has(tool.label) ? "<p>" : `<${tool.block}>`);
+    if ("special" in tool) {
+      if (tool.special === "checklist") checklist();
+      else link();
+    } else if ("block" in tool) {
+      document.execCommand("formatBlock", false, active.has(tool.label) ? "<p>" : `<${tool.block}>`);
+    } else if (tool.command === "insertUnorderedList" && caret()?.closest(CHECKLIST)) {
+      // From a checklist to a plain list: the same items, without their boxes.
+      const ul = caret()!.closest(CHECKLIST)!;
+      ul.removeAttribute("data-type");
+      ul.querySelectorAll(":scope > li").forEach((li) => li.removeAttribute("data-checked"));
+    } else {
+      document.execCommand(tool.command);
+    }
     edited();
   }
 
@@ -2135,16 +2480,22 @@ function NoteDialog({
       onClick={(e) => downOnBackdrop.current && e.target === e.currentTarget && e.currentTarget.close()}
       onClose={() => {
         if (deleted.current) return;
-        onClose({ title, html: editor.current?.innerHTML ?? note.html, pinned }, changed.current);
+        onClose(
+          { title, html: editor.current?.innerHTML ?? note.html, pinned, category, tags, color },
+          changed.current,
+        );
       }}
-      className="m-auto flex max-h-[calc(100dvh-2rem)] w-[min(640px,calc(100vw-2rem))] flex-col rounded-3xl border border-line bg-surface p-0 text-ink backdrop:bg-black/40 backdrop:backdrop-blur-sm"
+      style={color ? tint(color) : undefined}
+      className={`m-auto flex max-h-[calc(100dvh-2rem)] w-[min(640px,calc(100vw-2rem))] flex-col rounded-3xl border p-0 text-ink backdrop:bg-black/40 backdrop:backdrop-blur-sm ${
+        color ? "note-tint" : "border-line bg-surface"
+      }`}
     >
       <div className="flex items-start gap-2 px-5 pt-5 sm:px-6">
         <input
           value={title}
           onChange={(e) => {
             setTitle(e.target.value);
-            changed.current = true;
+            touched();
           }}
           onKeyDown={(e) => {
             if (e.key === "Enter") {
@@ -2164,9 +2515,9 @@ function NoteDialog({
           title={pinned ? "Unpin" : "Pin"}
           onClick={() => {
             setPinned(!pinned);
-            changed.current = true;
+            touched();
           }}
-          className={`flex h-9 w-9 shrink-0 cursor-pointer items-center justify-center rounded-lg transition-colors hover:bg-surface-sunken ${
+          className={`flex h-9 w-9 shrink-0 cursor-pointer items-center justify-center rounded-lg transition-colors hover:bg-surface-sunken/70 ${
             pinned ? "text-ink" : "text-ink-muted"
           }`}
         >
@@ -2191,8 +2542,8 @@ function NoteDialog({
             onClick={() => apply(tool)}
             className={`flex h-8 w-8 cursor-pointer items-center justify-center rounded-lg transition-colors ${
               active.has(tool.label)
-                ? "bg-surface-sunken text-ink"
-                : "text-ink-muted hover:bg-surface-sunken hover:text-ink"
+                ? "bg-surface-sunken/80 text-ink"
+                : "text-ink-muted hover:bg-surface-sunken/70 hover:text-ink"
             }`}
           >
             {tool.icon}
@@ -2218,15 +2569,33 @@ function NoteDialog({
           tabIndex={0}
           contentEditable
           suppressContentEditableWarning
-          onInput={edited}
+          onInput={(e) => {
+            // A new line on a checklist starts unticked, whatever the line it came from.
+            if ((e.nativeEvent as InputEvent).inputType === "insertParagraph") {
+              const li = caret()?.closest(`${CHECKLIST} > li`);
+              li?.setAttribute("data-checked", "false");
+            }
+            edited();
+          }}
           onKeyUp={refreshTools}
+          onClick={(e) => {
+            const item = checkboxAt(e.currentTarget, e.clientX, e.clientY);
+            if (item !== null) toggleItem(e.currentTarget.querySelectorAll(`${CHECKLIST} > li`)[item]);
+          }}
           onKeyDown={(e) => {
-            // Enter on an empty line leaves a quote, the way it leaves a list.
             if (e.key !== "Enter" || e.shiftKey) return;
-            const line = document.getSelection()?.anchorNode;
+            const at = caret();
+            // ⌘Enter ticks the checklist item the caret is on.
+            const item = at?.closest(`${CHECKLIST} > li`);
+            if (item && (e.metaKey || e.ctrlKey)) {
+              e.preventDefault();
+              toggleItem(item);
+              return;
+            }
+            // Enter on an empty line leaves a quote, the way it leaves a list.
             if (
               document.queryCommandValue("formatBlock").toLowerCase() === "blockquote" &&
-              !line?.textContent
+              !document.getSelection()?.anchorNode?.textContent
             ) {
               e.preventDefault();
               document.execCommand("formatBlock", false, "<p>");
@@ -2243,15 +2612,89 @@ function NoteDialog({
             e.preventDefault();
             document.execCommand("insertText", false, e.dataTransfer.getData("text/plain"));
           }}
-          className="note-body min-h-[40vh] break-words rounded-md px-1 py-3 text-[15px] leading-relaxed sm:min-h-[320px]"
+          className="note-body min-h-[36vh] break-words rounded-md px-1 py-3 text-[15px] leading-relaxed sm:min-h-[280px]"
         />
       </div>
 
-      <div className="flex items-center justify-between gap-3 border-t border-line px-4 py-3 sm:px-5">
+      {/* Where it is filed, and its tags. */}
+      <div className="mx-4 flex flex-wrap items-center gap-1.5 border-t border-line pt-3 sm:mx-5">
+        <CategoryPicker
+          current={category}
+          tree={tree}
+          none="No category"
+          onMove={(next) => {
+            setCategory(next);
+            touched();
+          }}
+        />
+        {editingTags ? (
+          <div className="w-full [&>div]:mt-1">
+            <TagEditor
+              initial={tags}
+              suggestions={allTags}
+              onDone={(next) => {
+                setEditingTags(false);
+                if (next.join("\n") !== tags.join("\n")) {
+                  setTags(next);
+                  touched();
+                }
+              }}
+            />
+          </div>
+        ) : (
+          <button
+            type="button"
+            onClick={() => setEditingTags(true)}
+            className="flex min-h-7 cursor-pointer flex-wrap items-center gap-1.5 rounded-lg px-1.5 text-[12px] text-ink-muted transition-colors hover:text-ink"
+          >
+            {tags.length ? (
+              tags.map((t) => (
+                <span
+                  key={t}
+                  className="rounded-md bg-surface-sunken/70 px-1.5 py-0.5 font-mono text-[11.5px]"
+                >
+                  #{t}
+                </span>
+              ))
+            ) : (
+              <>
+                <Hash size={13} aria-hidden="true" />
+                Add tags
+              </>
+            )}
+          </button>
+        )}
+      </div>
+
+      {palette && (
+        <div className="mx-4 pt-3 sm:mx-5">
+          <Swatches
+            value={color}
+            onChange={(next) => {
+              setColor(next);
+              touched();
+            }}
+          />
+        </div>
+      )}
+
+      <div className="flex items-center justify-between gap-3 px-4 py-3 sm:px-5">
         <span className="px-1 font-mono text-[11px] text-ink-muted">
           {isNew ? "New note" : `Edited ${ago(note.updatedAt)}`}
         </span>
         <div className="flex items-center gap-1.5">
+          <button
+            type="button"
+            aria-label="Colour"
+            title="Colour"
+            aria-expanded={palette}
+            onClick={() => setPalette(!palette)}
+            className={`flex h-9 w-9 cursor-pointer items-center justify-center rounded-lg transition-colors hover:bg-surface-sunken/70 hover:text-ink ${
+              palette ? "text-ink" : "text-ink-muted"
+            }`}
+          >
+            <Palette size={17} aria-hidden="true" />
+          </button>
           {!isNew && (
             <button
               type="button"

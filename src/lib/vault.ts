@@ -39,9 +39,28 @@ export type Note = {
   title: string;
   html: string;
   pinned?: boolean;
+  /** Absent or `""` when it is in no category. Notes are never in the inbox. */
+  category?: string;
+  /** Lower case, without the `#`. Absent when there are none. */
+  tags?: string[];
+  color?: NoteColor;
   createdAt: string;
   updatedAt: string;
 };
+
+/** The colours a note can be, by name; the page decides the shades. */
+export const NOTE_COLORS = [
+  "red",
+  "orange",
+  "yellow",
+  "green",
+  "teal",
+  "blue",
+  "purple",
+  "pink",
+  "gray",
+] as const;
+export type NoteColor = (typeof NOTE_COLORS)[number];
 
 export type Vault = {
   /**
@@ -58,7 +77,7 @@ export type Vault = {
   parents?: Record<string, string>;
   /** Device keys carry this. Resetting the key changes it, which revokes every old one. */
   keyVersion?: string;
-  /** Written notes, last edited first. Absent until the first one. */
+  /** Written notes, newest first. Absent until the first one. */
   notes?: Note[];
 };
 
@@ -78,12 +97,12 @@ export type VaultAction =
   | { type: "moveCategory"; name: string; parent: string }
   /** Server only: the version is made there, never taken from a request. */
   | { type: "setKeyVersion"; version: string }
-  /** Inserts or replaces by id, moving it to the top. A replaced note keeps its `createdAt`. */
+  /** Inserts at the top, or replaces in place by id. A replaced note keeps its `createdAt`. */
   | { type: "putNote"; note: Note }
   | { type: "deleteNote"; id: string };
 
 /** What a client sends to save a note. The server sets the times and cleans the HTML. */
-export type NoteInput = Pick<Note, "id" | "title" | "html" | "pinned">;
+export type NoteInput = Pick<Note, "id" | "title" | "html" | "pinned" | "category" | "tags" | "color">;
 
 /**
  * What a client sends. Identical to the reducer's actions except that adding is
@@ -229,6 +248,14 @@ function withParents(vault: Vault, parents: Record<string, string>): Vault {
   return { ...next, categories: categoryTree(next).map((n) => n.name) };
 }
 
+/** A note in `category`, or in none: notes are never in the inbox, so `""` drops the field. */
+function refile(note: Note, category: string): Note {
+  const next = { ...note };
+  if (category) next.category = category;
+  else delete next.category;
+  return next;
+}
+
 export function applyAction(vault: Vault, action: VaultAction): Vault {
   switch (action.type) {
     case "put": {
@@ -305,6 +332,9 @@ export function applyAction(vault: Vault, action: VaultAction): Vault {
           ...vault,
           categories,
           marks: vault.marks.map((m) => (m.category === from ? { ...m, category: to } : m)),
+          ...(vault.notes
+            ? { notes: vault.notes.map((n) => (n.category === from ? { ...n, category: to } : n)) }
+            : {}),
         },
         parents,
       );
@@ -323,6 +353,9 @@ export function applyAction(vault: Vault, action: VaultAction): Vault {
           ...vault,
           categories: vault.categories.filter((c) => c !== action.name),
           marks: vault.marks.map((m) => (m.category === action.name ? { ...m, category: up } : m)),
+          ...(vault.notes
+            ? { notes: vault.notes.map((n) => (n.category === action.name ? refile(n, up) : n)) }
+            : {}),
         },
         parents,
       );
@@ -332,8 +365,19 @@ export function applyAction(vault: Vault, action: VaultAction): Vault {
     case "putNote": {
       const notes = vault.notes ?? [];
       const old = notes.find((n) => n.id === action.note.id);
-      const note = old ? { ...action.note, createdAt: old.createdAt } : action.note;
-      return { ...vault, notes: [note, ...notes.filter((n) => n.id !== note.id)] };
+      const note: Note = { ...action.note, ...(old ? { createdAt: old.createdAt } : {}) };
+      const category = cleanCategory(note.category ?? "");
+      if (category) note.category = category;
+      else delete note.category;
+      if (!note.tags?.length) delete note.tags;
+      if (!note.color) delete note.color;
+      return {
+        ...vault,
+        // A note filed under a new name makes that category, as a link does.
+        categories: category ? withCategory(vault.categories, category) : vault.categories,
+        // Editing keeps a note where it is: ticking an item should not reshuffle the grid.
+        notes: old ? notes.map((n) => (n.id === note.id ? note : n)) : [note, ...notes],
+      };
     }
     case "deleteNote":
       return vault.notes ? { ...vault, notes: vault.notes.filter((n) => n.id !== action.id) } : vault;
@@ -357,7 +401,8 @@ export function noteText(html: string): string {
 
 export function noteMatches(note: Note, query: string): boolean {
   const q = query.trim().toLowerCase();
-  return !q || `${note.title}\n${noteText(note.html)}`.toLowerCase().includes(q);
+  const tags = (note.tags ?? []).map((t) => `#${t}`).join(" ");
+  return !q || `${note.title}\n${noteText(note.html)}\n${tags}`.toLowerCase().includes(q);
 }
 
 /** A mark existing only on the client while its preview is being fetched. */
@@ -461,6 +506,11 @@ export function parseRequest(body: unknown): VaultRequest | null {
       if (!noteId || !/^[\w-]+$/.test(noteId) || typeof n.html !== "string" || n.html.length > MAX_NOTE) {
         return null;
       }
+      const category = cleanCategory(str(n.category, 100) ?? "");
+      const tags = Array.isArray(n.tags)
+        ? cleanTags(n.tags.slice(0, 100).filter((t): t is string => typeof t === "string"))
+        : [];
+      const color = NOTE_COLORS.find((c) => c === n.color);
       return {
         type: "saveNote",
         note: {
@@ -468,6 +518,9 @@ export function parseRequest(body: unknown): VaultRequest | null {
           title: str(n.title, 300)?.trim() ?? "",
           html: n.html,
           ...(n.pinned === true ? { pinned: true } : {}),
+          ...(category && category.toLowerCase() !== "inbox" ? { category } : {}),
+          ...(tags.length ? { tags } : {}),
+          ...(color ? { color } : {}),
         },
       };
     }
