@@ -13,6 +13,7 @@ import {
   siteOf,
   xStatus,
   type Mark,
+  type Note,
   type Vault,
   type VaultAction,
   type VaultRequest,
@@ -30,10 +31,79 @@ function parse(text: string): Vault {
   const data = JSON.parse(text) as Vault;
   // Refuse to carry on from a file we do not understand: the next save would
   // overwrite it with an empty vault.
-  if (!Array.isArray(data?.categories) || !Array.isArray(data?.marks)) {
+  if (
+    !Array.isArray(data?.categories) ||
+    !Array.isArray(data?.marks) ||
+    (data.notes !== undefined && !Array.isArray(data.notes))
+  ) {
     throw new Error(`${FILE} is not a gitmarks vault.`);
   }
+  // Notes are shown as HTML, so they are cleaned on the way out too: the file
+  // can be edited by hand on GitHub, by anything with access to the repo.
+  if (data.notes) {
+    data.notes = data.notes.map((n) => ({ ...n, html: cleanHtml(typeof n.html === "string" ? n.html : "") }));
+  }
   return data;
+}
+
+// --- Notes --------------------------------------------------------------------
+
+/** What the note editor makes. Everything else is unwrapped to its text. */
+const NOTE_TAGS = new Set([
+  "p",
+  "div",
+  "br",
+  "b",
+  "strong",
+  "i",
+  "em",
+  "u",
+  "s",
+  "strike",
+  "ul",
+  "ol",
+  "li",
+  "h2",
+  "h3",
+  "blockquote",
+]);
+
+const escapeText = (text: string) => text.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+
+/**
+ * Rebuilds note HTML from an allowlist, so nothing survives that could run:
+ * no attributes at all, no tags beyond the editor's, and scripts, styles and
+ * comments dropped with their contents. Exported for tests.
+ */
+export function cleanHtml(html: string): string {
+  const root = cheerio.load(html, null, false).root()[0];
+  const walk = (nodes: typeof root.children, depth: number): string =>
+    nodes
+      .map((node) => {
+        if (node.type === "text") return escapeText(node.data);
+        if (node.type !== "tag") return "";
+        // Past any sensible nesting, keep the words and drop the structure.
+        if (depth > 40) return escapeText(textOf(node));
+        if (node.name === "br") return "<br>";
+        const inner = walk(node.children, depth + 1);
+        if (!NOTE_TAGS.has(node.name)) return inner;
+        // Editing leaves empty paragraphs behind; a blank line is `<p><br></p>`.
+        if (!inner && (node.name === "p" || node.name === "div")) return "";
+        return `<${node.name}>${inner}</${node.name}>`;
+      })
+      .join("");
+  // Without recursion, which a hostile file could nest deep enough to overflow.
+  function textOf(start: (typeof root.children)[number]): string {
+    let text = "";
+    const stack = [start];
+    while (stack.length) {
+      const node = stack.pop()!;
+      if (node.type === "text") text += node.data;
+      else if (node.type === "tag") stack.push(...[...node.children].reverse());
+    }
+    return text;
+  }
+  return walk(root.children, 0);
 }
 
 /**
@@ -97,6 +167,16 @@ export async function performRequest(store: Repo | null, request: VaultRequest):
     const publicRepo = await publicRepoProblem(store);
     if (publicRepo) {
       return { ok: false, error: `${publicRepo} is public, so saving is paused. Make it private on GitHub.` };
+    }
+    if (request.type === "saveNote") {
+      const now = new Date().toISOString();
+      const note: Note = {
+        ...request.note,
+        html: cleanHtml(request.note.html),
+        createdAt: now,
+        updatedAt: now,
+      };
+      return await mutate(store, [{ type: "putNote", note }], "gitmarks: save a note");
     }
     if (request.type === "resetKey") {
       const version = randomBytes(9).toString("base64url");

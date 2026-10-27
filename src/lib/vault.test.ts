@@ -4,6 +4,8 @@ import {
   applyAction,
   categoryTree,
   matches,
+  noteMatches,
+  noteText,
   withDescendants,
   extractUrls,
   normalizeUrl,
@@ -11,9 +13,10 @@ import {
   splitMatches,
   xStatus,
   type Mark,
+  type Note,
   type Vault,
 } from "./vault";
-import { parseMeta } from "./server";
+import { cleanHtml, parseMeta } from "./server";
 
 const mark = (over: Partial<Mark> = {}): Mark => ({
   id: "a",
@@ -333,5 +336,92 @@ describe("parseRequest, for the new actions", () => {
   it("asks for a new key but never accepts one", () => {
     expect(parseRequest({ type: "resetKey" })).toEqual({ type: "resetKey" });
     expect(parseRequest({ type: "setKeyVersion", version: "mine" })).toBeNull();
+  });
+});
+
+describe("notes", () => {
+  const note = (over: Partial<Note> = {}): Note => ({
+    id: "n1",
+    title: "Groceries",
+    html: "<ul><li>milk</li><li>eggs</li></ul>",
+    createdAt: "2026-01-01T00:00:00.000Z",
+    updatedAt: "2026-01-01T00:00:00.000Z",
+    ...over,
+  });
+
+  it("leave a vault without notes as it was until the first one", () => {
+    const v: Vault = { categories: [], marks: [mark()] };
+    expect(applyAction(v, { type: "deleteNote", id: "x" })).toBe(v);
+    expect(
+      applyAction(v, { type: "put", mark: mark({ id: "b", url: "https://e.com/b" }) }),
+    ).not.toHaveProperty("notes");
+  });
+
+  it("go newest edit first, and keep when they were first written", () => {
+    let v = applyAction(EMPTY_VAULT, { type: "putNote", note: note() });
+    v = applyAction(v, { type: "putNote", note: note({ id: "n2", title: "Ideas" }) });
+    v = applyAction(v, {
+      type: "putNote",
+      note: note({
+        title: "Shopping",
+        createdAt: "2026-05-05T00:00:00.000Z",
+        updatedAt: "2026-05-05T00:00:00.000Z",
+      }),
+    });
+    expect(v.notes!.map((n) => n.title)).toEqual(["Shopping", "Ideas"]);
+    expect(v.notes![0].createdAt).toBe("2026-01-01T00:00:00.000Z");
+    expect(v.notes![0].updatedAt).toBe("2026-05-05T00:00:00.000Z");
+    expect(applyAction(v, { type: "deleteNote", id: "n2" }).notes!.map((n) => n.id)).toEqual(["n1"]);
+    expect(v.marks).toEqual([]);
+  });
+
+  it("are searched by title and words, not by their tags", () => {
+    expect(noteText("<h2>Plan</h2><p>Buy <b>milk</b> &amp; eggs</p><ul><li>one</li></ul>")).toBe(
+      "Plan\nBuy milk & eggs\none",
+    );
+    expect(noteText("<p>&lt;b&gt; is &amp;lt;</p>")).toBe("<b> is &lt;");
+    expect(noteMatches(note(), "EGGS")).toBe(true);
+    expect(noteMatches(note(), "grocer")).toBe(true);
+    expect(noteMatches(note(), "li")).toBe(false);
+  });
+
+  it("are parsed from a request without trusting its times", () => {
+    expect(
+      parseRequest({
+        type: "saveNote",
+        note: { id: "abc-1", title: " Hi ", html: "<p>x</p>", pinned: true, createdAt: "1999" },
+      }),
+    ).toEqual({ type: "saveNote", note: { id: "abc-1", title: "Hi", html: "<p>x</p>", pinned: true } });
+    expect(parseRequest({ type: "saveNote", note: { id: "a b", html: "" } })).toBeNull();
+    expect(parseRequest({ type: "saveNote", note: { id: "a", html: "x".repeat(100_001) } })).toBeNull();
+    expect(parseRequest({ type: "saveNote", note: { id: "a" } })).toBeNull();
+    expect(parseRequest({ type: "putNote", note: note() })).toBeNull();
+    expect(parseRequest({ type: "deleteNote", id: "n1" })).toEqual({ type: "deleteNote", id: "n1" });
+  });
+});
+
+describe("cleanHtml", () => {
+  it("keeps what the editor makes", () => {
+    const html =
+      "<h2>Plan</h2><p><b>bold</b> <i>it</i> <u>under</u> <s>gone</s><br></p><ol><li>a</li></ol><blockquote>q</blockquote>";
+    expect(cleanHtml(html)).toBe(html);
+  });
+
+  it("drops anything that could run, and every attribute", () => {
+    expect(cleanHtml('<p onclick="x()">hi<script>alert(1)</script></p>')).toBe("<p>hi</p>");
+    expect(cleanHtml('<img src=x onerror="alert(1)"><b style="color:red">b</b>')).toBe("<b>b</b>");
+    expect(cleanHtml('<a href="javascript:alert(1)">link</a>')).toBe("link");
+    expect(cleanHtml("<style>p{}</style><!-- c --><iframe src=//e.com></iframe>ok")).toBe("ok");
+    expect(cleanHtml("<svg><script>alert(1)</script></svg>")).toBe("");
+    expect(cleanHtml('<span>a &lt;script&gt; "b"</span>')).toBe('a &lt;script&gt; "b"');
+  });
+
+  it("drops the empty paragraphs editing leaves, but keeps blank lines", () => {
+    expect(cleanHtml("<p>a</p><p></p><div></div><p><br></p><p>b</p>")).toBe("<p>a</p><p><br></p><p>b</p>");
+  });
+
+  it("survives deep nesting", () => {
+    const deep = "<b>".repeat(5000) + "deep" + "</b>".repeat(5000);
+    expect(cleanHtml(deep)).toContain("deep");
   });
 });

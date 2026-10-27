@@ -56,6 +56,7 @@ export come free from git.
 - **Search that shows its work.** Matches are highlighted in the title, the text, your notes and the author.
 - **Instant.** Every change appears at once, then settles on the server's answer. Saves from your other devices show up within a minute, or at once with Refresh.
 - **Folders inside folders.** Drag one category onto another to nest it. A folder shows everything inside it, and closes in the sidebar with its arrow.
+- **Notes.** Write things down that aren't links, with bold, italics, underline, headings, lists and quotes. Pin the ones you need most.
 - **Tags.** Add as many as you like to any card, then click one to see everything that has it, across every category.
 - **Undo** on every move and delete. Notes on any card. Rename and merge categories.
 - **Reset your key** from Connect if it ever leaks. Every old key stops working at once.

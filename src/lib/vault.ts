@@ -29,6 +29,20 @@ export type Mark = {
   pending?: boolean;
 };
 
+/**
+ * A note written by hand, like on a sticky note: no link, just text. `html` is
+ * the formatted body, limited to the few tags the editor makes (bold, lists…);
+ * the server cleans it on the way in and on the way out.
+ */
+export type Note = {
+  id: string;
+  title: string;
+  html: string;
+  pinned?: boolean;
+  createdAt: string;
+  updatedAt: string;
+};
+
 export type Vault = {
   /**
    * Every category by name, parents before their children. Kept flat so that
@@ -44,6 +58,8 @@ export type Vault = {
   parents?: Record<string, string>;
   /** Device keys carry this. Resetting the key changes it, which revokes every old one. */
   keyVersion?: string;
+  /** Written notes, last edited first. Absent until the first one. */
+  notes?: Note[];
 };
 
 export const EMPTY_VAULT: Vault = { categories: [], marks: [] };
@@ -61,17 +77,27 @@ export type VaultAction =
   /** `parent` of `""` moves it to the top level. */
   | { type: "moveCategory"; name: string; parent: string }
   /** Server only: the version is made there, never taken from a request. */
-  | { type: "setKeyVersion"; version: string };
+  | { type: "setKeyVersion"; version: string }
+  /** Inserts or replaces by id, moving it to the top. A replaced note keeps its `createdAt`. */
+  | { type: "putNote"; note: Note }
+  | { type: "deleteNote"; id: string };
+
+/** What a client sends to save a note. The server sets the times and cleans the HTML. */
+export type NoteInput = Pick<Note, "id" | "title" | "html" | "pinned">;
 
 /**
  * What a client sends. Identical to the reducer's actions except that adding is
- * by URL, because only the server can fetch the preview, and that a new key is
- * asked for rather than supplied.
+ * by URL, because only the server can fetch the preview, that a new key is
+ * asked for rather than supplied, and that a note arrives without its times.
  */
 export type VaultRequest =
-  | Exclude<VaultAction, { type: "put" | "setKeyVersion" }>
+  | Exclude<VaultAction, { type: "put" | "setKeyVersion" | "putNote" }>
   | { type: "add"; urls: string[]; category?: string; note?: string }
-  | { type: "resetKey" };
+  | { type: "resetKey" }
+  | { type: "saveNote"; note: NoteInput };
+
+/** Longest note body, in characters of HTML. */
+export const MAX_NOTE = 100_000;
 
 /** Most URLs one request may add. Each one is a preview fetch. */
 export const MAX_BATCH = 20;
@@ -303,7 +329,35 @@ export function applyAction(vault: Vault, action: VaultAction): Vault {
     }
     case "setKeyVersion":
       return { ...vault, keyVersion: action.version };
+    case "putNote": {
+      const notes = vault.notes ?? [];
+      const old = notes.find((n) => n.id === action.note.id);
+      const note = old ? { ...action.note, createdAt: old.createdAt } : action.note;
+      return { ...vault, notes: [note, ...notes.filter((n) => n.id !== note.id)] };
+    }
+    case "deleteNote":
+      return vault.notes ? { ...vault, notes: vault.notes.filter((n) => n.id !== action.id) } : vault;
   }
+}
+
+const ENTITIES: Record<string, string> = { amp: "&", lt: "<", gt: ">", quot: '"', "#39": "'", nbsp: " " };
+
+/**
+ * A note's words without the formatting, for search and for telling an empty
+ * note. Plain text out, never HTML: it is only ever matched or shown as text.
+ */
+export function noteText(html: string): string {
+  return html
+    .split(/<\/(?:p|div|li|h2|h3|blockquote)>|<br\s*\/?>/i)
+    .map((line) => line.split(/<[^>]*>/).join(""))
+    .join("\n")
+    .replace(/&(amp|lt|gt|quot|#39|nbsp);/g, (_, e: string) => ENTITIES[e])
+    .trim();
+}
+
+export function noteMatches(note: Note, query: string): boolean {
+  const q = query.trim().toLowerCase();
+  return !q || `${note.title}\n${noteText(note.html)}`.toLowerCase().includes(q);
 }
 
 /** A mark existing only on the client while its preview is being fetched. */
@@ -400,6 +454,25 @@ export function parseRequest(body: unknown): VaultRequest | null {
         : null;
     case "resetKey":
       return { type: "resetKey" };
+    case "saveNote": {
+      const n = b.note as Record<string, unknown> | null;
+      if (!n || typeof n !== "object") return null;
+      const noteId = str(n.id, 100);
+      if (!noteId || !/^[\w-]+$/.test(noteId) || typeof n.html !== "string" || n.html.length > MAX_NOTE) {
+        return null;
+      }
+      return {
+        type: "saveNote",
+        note: {
+          id: noteId,
+          title: str(n.title, 300)?.trim() ?? "",
+          html: n.html,
+          ...(n.pinned === true ? { pinned: true } : {}),
+        },
+      };
+    }
+    case "deleteNote":
+      return id ? { type: "deleteNote", id } : null;
     case "renameCategory": {
       const from = str(b.from, 100);
       const to = cleanCategory(str(b.to, 100) ?? "");

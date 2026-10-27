@@ -8,8 +8,18 @@ import {
   FolderPlus,
   Hash,
   LinkSimple,
+  ListBullets,
+  ListNumbers,
   MagnifyingGlass,
   NotePencil,
+  Notepad,
+  PushPin,
+  Quotes,
+  TextB,
+  TextHTwo,
+  TextItalic,
+  TextStrikethrough,
+  TextUnderline,
   DeviceMobile,
   PencilSimple,
   Plus,
@@ -28,19 +38,22 @@ import {
   cleanTag,
   extractUrls,
   matches,
+  noteMatches,
+  noteText,
   parentOf,
   placeholderMark,
   splitMatches,
   withDescendants,
   type Mark,
   type MarkPatch,
+  type Note,
   type Vault as VaultData,
   type VaultAction,
   type VaultRequest,
 } from "@/lib/vault";
 
-/** `all` and `inbox` are views; any other string is a category. */
-type View = { kind: "all" } | { kind: "inbox" } | { kind: "category"; name: string };
+/** `all`, `inbox` and `notes` are views; any other string is a category. */
+type View = { kind: "all" } | { kind: "inbox" } | { kind: "notes" } | { kind: "category"; name: string };
 type Toast = { id: number; message: string; undo?: () => void; error?: boolean };
 
 const DRAG_TYPE = "application/x-vault-mark";
@@ -150,16 +163,21 @@ const subscribeResize = (cb: () => void) => {
  * rough height estimate. Unlike CSS columns this keeps newest-first reading
  * left to right along the top row.
  */
-function intoColumns(marks: Mark[], count: number): Mark[][] {
-  const columns: Mark[][] = Array.from({ length: count }, () => []);
+function intoColumns<T>(items: T[], count: number, height: (item: T) => number): T[][] {
+  const columns: T[][] = Array.from({ length: count }, () => []);
   const heights = new Array(count).fill(0);
-  for (const mark of marks) {
+  for (const item of items) {
     const i = heights.indexOf(Math.min(...heights));
-    columns[i].push(mark);
-    heights[i] += 120 + (mark.image ? 190 : 0) + Math.min(mark.description.length, 420) / 2.2;
+    columns[i].push(item);
+    heights[i] += height(item);
   }
   return columns;
 }
+
+/** A card's rough height, enough to keep the columns even. */
+const markHeight = (mark: Mark) =>
+  120 + (mark.image ? 190 : 0) + Math.min(mark.description.length, 420) / 2.2;
+const noteHeight = (note: Note) => 80 + Math.min(note.html.length, 900) / 3;
 
 const isTyping = (target: EventTarget | null) =>
   target instanceof HTMLElement &&
@@ -188,6 +206,8 @@ export default function Vault({
 
   const [view, setView] = useState<View>({ kind: "all" });
   const [tag, setTag] = useState<string | null>(null);
+  /** The note open in the editor, new or not. */
+  const [openNote, setOpenNote] = useState<Note | null>(null);
   const [query, setQuery] = useState("");
   const [key, setKey] = useState(deviceKey);
   // On a touch screen: the card held down, and the drop target under the finger.
@@ -279,6 +299,40 @@ export default function Vault({
   }, []);
 
   const targetCategory = view.kind === "category" ? view.name : "";
+
+  function newNote() {
+    const now = new Date().toISOString();
+    setOpenNote({ id: crypto.randomUUID(), title: "", html: "", createdAt: now, updatedAt: now });
+  }
+
+  function saveNote(note: Note) {
+    const input = {
+      id: note.id,
+      title: note.title.trim(),
+      html: note.html,
+      ...(note.pinned ? { pinned: true } : {}),
+    };
+    send({ type: "saveNote", note: input }, [
+      { type: "putNote", note: { ...input, createdAt: note.createdAt, updatedAt: new Date().toISOString() } },
+    ]);
+  }
+
+  function removeNote(note: Note) {
+    send({ type: "deleteNote", id: note.id }, [{ type: "deleteNote", id: note.id }]);
+    notify("Note deleted", { undo: () => saveNote(note) });
+  }
+
+  /** The editor closed: keep what changed. A note left empty is not kept. */
+  function closeNote(before: Note, after: Pick<Note, "title" | "html" | "pinned">, changed: boolean) {
+    setOpenNote(null);
+    if (!changed) return;
+    const exists = vault.notes?.some((n) => n.id === before.id);
+    if (!after.title.trim() && !noteText(after.html)) {
+      if (exists) removeNote(before);
+      return;
+    }
+    saveNote({ ...before, ...after });
+  }
 
   function add(urls: string[], category = targetCategory, note?: string) {
     if (urls.length === 0) return false;
@@ -471,7 +525,9 @@ export default function Vault({
     () => columnsFor(window.innerWidth),
     () => 3,
   );
-  const columns = intoColumns(shown, columnCount);
+  const columns = intoColumns(shown, columnCount, markHeight);
+  const notes = vault.notes ?? [];
+  const shownNotes = notes.filter((n) => noteMatches(n, query));
 
   // A category renamed or removed out from under the open view falls back to all.
   const activeView: View =
@@ -494,7 +550,11 @@ export default function Vault({
           tree={tree}
           tags={tags}
           activeTag={activeTag}
-          onTag={setTag}
+          onTag={(t) => {
+            setTag(t);
+            if (view.kind === "notes") setView({ kind: "all" });
+          }}
+          noteCount={notes.length}
         />
 
         <main id="main-content" className="min-w-0 flex-1">
@@ -505,14 +565,18 @@ export default function Vault({
                   ? "Everything"
                   : activeView.kind === "inbox"
                     ? "Inbox"
-                    : activeView.name}
+                    : activeView.kind === "notes"
+                      ? "Notes"
+                      : activeView.name}
               </h1>
               <p className="mt-2 flex flex-wrap items-center gap-2 font-mono text-xs tabular-nums text-ink-muted">
                 <span>
-                  {shown.length} {shown.length === 1 ? "link" : "links"}
+                  {activeView.kind === "notes"
+                    ? `${shownNotes.length} ${shownNotes.length === 1 ? "note" : "notes"}`
+                    : `${shown.length} ${shown.length === 1 ? "link" : "links"}`}
                   {query && ` matching “${query}”`}
                 </span>
-                {activeTag && (
+                {activeTag && activeView.kind !== "notes" && (
                   <button
                     type="button"
                     onClick={() => setTag(null)}
@@ -581,41 +645,68 @@ export default function Vault({
             </div>
           </header>
 
-          <AddBar category={targetCategory} onAdd={add} />
-
-          {shown.length === 0 ? (
-            <Empty
-              view={activeView}
-              searching={Boolean(query || activeTag)}
-              hasAny={vault.marks.length > 0}
+          {activeView.kind === "notes" ? (
+            <Notes
+              notes={shownNotes}
+              columnCount={columnCount}
+              searching={Boolean(query)}
+              onNew={newNote}
+              onOpen={setOpenNote}
+              onPin={(note) => saveNote({ ...note, pinned: !note.pinned })}
+              onDelete={removeNote}
             />
           ) : (
-            <div className="mt-2 flex items-start gap-4">
-              {columns.map((column, i) => (
-                <div key={i} className="flex min-w-0 flex-1 flex-col gap-4">
-                  {column.map((mark) => (
-                    <Card
-                      key={mark.id}
-                      mark={mark}
-                      tree={tree}
-                      allTags={tags}
-                      showCategory={activeView.kind !== "category" || mark.category !== activeView.name}
-                      query={query}
-                      onMove={(c) => move(mark, c)}
-                      onNote={(note) => update(mark, { note })}
-                      onTags={(next) => update(mark, { tags: next })}
-                      onTag={setTag}
-                      onCarry={() => setCarrying(mark)}
-                      onDelete={() => remove(mark)}
-                      onCopied={() => notify("Link copied")}
-                    />
+            <>
+              <AddBar category={targetCategory} onAdd={add} />
+
+              {shown.length === 0 ? (
+                <Empty
+                  view={activeView}
+                  searching={Boolean(query || activeTag)}
+                  hasAny={vault.marks.length > 0}
+                />
+              ) : (
+                <div className="mt-2 flex items-start gap-4">
+                  {columns.map((column, i) => (
+                    <div key={i} className="flex min-w-0 flex-1 flex-col gap-4">
+                      {column.map((mark) => (
+                        <Card
+                          key={mark.id}
+                          mark={mark}
+                          tree={tree}
+                          allTags={tags}
+                          showCategory={activeView.kind !== "category" || mark.category !== activeView.name}
+                          query={query}
+                          onMove={(c) => move(mark, c)}
+                          onNote={(note) => update(mark, { note })}
+                          onTags={(next) => update(mark, { tags: next })}
+                          onTag={setTag}
+                          onCarry={() => setCarrying(mark)}
+                          onDelete={() => remove(mark)}
+                          onCopied={() => notify("Link copied")}
+                        />
+                      ))}
+                    </div>
                   ))}
                 </div>
-              ))}
-            </div>
+              )}
+            </>
           )}
         </main>
       </div>
+
+      {openNote && (
+        <NoteDialog
+          key={openNote.id}
+          note={openNote}
+          isNew={!notes.some((n) => n.id === openNote.id)}
+          onClose={(after, changed) => closeNote(openNote, after, changed)}
+          onDelete={() => {
+            setOpenNote(null);
+            removeNote(openNote);
+          }}
+        />
+      )}
 
       {carrying && (
         <MoveTray
@@ -679,6 +770,14 @@ export default function Vault({
           background-size: 200% 100%;
           animation: vault-shimmer 1.4s linear infinite;
         }
+        .note-body > * + * { margin-top: .4em }
+        .note-body h2 { font-size: 1.15em; font-weight: 600; letter-spacing: -0.01em }
+        .note-body h3 { font-weight: 600 }
+        .note-body ul { list-style: disc; padding-left: 1.3em }
+        .note-body ol { list-style: decimal; padding-left: 1.4em }
+        .note-body li + li { margin-top: .15em }
+        .note-body blockquote { border-left: 3px solid var(--line-strong); padding-left: .8em; color: var(--ink-muted) }
+        .note-body b, .note-body strong { font-weight: 600 }
         @media (prefers-reduced-motion: reduce) {
           .vault-toast, .vault-card, .vault-shimmer { animation: none }
         }
@@ -701,6 +800,7 @@ function Sidebar({
   tags,
   activeTag,
   onTag,
+  noteCount,
 }: {
   vault: VaultData;
   counts: Map<string, number>;
@@ -713,6 +813,7 @@ function Sidebar({
   tags: [string, number][];
   activeTag: string | null;
   onTag: (tag: string | null) => void;
+  noteCount: number;
 }) {
   /** Where a new category is being typed: `""` at the top level, or inside that folder. */
   const [adding, setAdding] = useState<string | null>(null);
@@ -843,6 +944,13 @@ function Sidebar({
           drop=""
           onDropMark={(id) => onDropMark(id, "")}
           onDropUrls={(urls) => onDropUrls(urls, "")}
+        />
+        <Row
+          label="Notes"
+          icon={<Notepad size={15} aria-hidden="true" />}
+          count={noteCount}
+          active={isActive({ kind: "notes" })}
+          onClick={() => onView({ kind: "notes" })}
         />
         <DropHeading label="Categories" onDropCategory={(dragged) => nest(dragged, "")} />
         {rows}
@@ -1775,6 +1883,399 @@ function Empty({ view, searching, hasAny }: { view: View; searching: boolean; ha
         </p>
       )}
     </div>
+  );
+}
+
+// --- Notes -------------------------------------------------------------------
+
+/** The note grid: a bar to start one, then pinned notes, then the rest. */
+function Notes({
+  notes,
+  columnCount,
+  searching,
+  onNew,
+  onOpen,
+  onPin,
+  onDelete,
+}: {
+  notes: Note[];
+  columnCount: number;
+  searching: boolean;
+  onNew: () => void;
+  onOpen: (note: Note) => void;
+  onPin: (note: Note) => void;
+  onDelete: (note: Note) => void;
+}) {
+  const pinned = notes.filter((n) => n.pinned);
+  const others = notes.filter((n) => !n.pinned);
+  const heading = "mb-3 px-1 font-mono text-[11px] uppercase tracking-[0.14em] text-ink-muted";
+  const grid = (list: Note[]) => (
+    <div className="flex items-start gap-4">
+      {intoColumns(list, columnCount, noteHeight).map((column, i) => (
+        <div key={i} className="flex min-w-0 flex-1 flex-col gap-4">
+          {column.map((note) => (
+            <NoteCard
+              key={note.id}
+              note={note}
+              onOpen={() => onOpen(note)}
+              onPin={() => onPin(note)}
+              onDelete={() => onDelete(note)}
+            />
+          ))}
+        </div>
+      ))}
+    </div>
+  );
+  return (
+    <>
+      <button
+        type="button"
+        onClick={onNew}
+        className="mt-6 flex h-14 w-full cursor-pointer items-center gap-3 rounded-2xl border border-line bg-surface-raised px-4 text-left text-[15px] text-ink-muted shadow-[0_1px_2px_rgba(0,0,0,0.03),0_8px_24px_-16px_rgba(0,0,0,0.18)] transition-colors hover:border-line-strong hover:text-ink"
+      >
+        <NotePencil size={18} aria-hidden="true" className="shrink-0" />
+        Take a note…
+      </button>
+      {notes.length === 0 ? (
+        <div className="mt-6 flex flex-col items-center justify-center rounded-3xl border border-dashed border-line-strong px-6 py-24 text-center">
+          <Notepad size={28} aria-hidden="true" className="text-ink-muted" />
+          <p className="mt-4 font-display text-xl font-semibold tracking-tight">
+            {searching ? "Nothing matches that." : "No notes yet."}
+          </p>
+          {!searching && (
+            <p className="mt-2 max-w-sm text-[14px] leading-relaxed text-ink-muted">
+              Write down anything that isn&apos;t a link: ideas, lists, things to remember. They&apos;re kept
+              in your repo with everything else.
+            </p>
+          )}
+        </div>
+      ) : (
+        <>
+          {pinned.length > 0 && (
+            <section className="mt-7">
+              <h2 className={heading}>Pinned</h2>
+              {grid(pinned)}
+            </section>
+          )}
+          {others.length > 0 && (
+            <section className="mt-7">
+              {pinned.length > 0 && <h2 className={heading}>Others</h2>}
+              {grid(others)}
+            </section>
+          )}
+        </>
+      )}
+    </>
+  );
+}
+
+function NoteCard({
+  note,
+  onOpen,
+  onPin,
+  onDelete,
+}: {
+  note: Note;
+  onOpen: () => void;
+  onPin: () => void;
+  onDelete: () => void;
+}) {
+  const long = note.html.length > 700;
+  return (
+    <article className="vault-card group/note relative rounded-2xl border border-line bg-surface-raised p-4 shadow-[0_1px_2px_rgba(0,0,0,0.03)] transition-colors hover:border-line-strong">
+      {/* The whole card opens the note; the buttons sit above this. */}
+      <button
+        type="button"
+        onClick={onOpen}
+        aria-label={`Open note: ${note.title || noteText(note.html).slice(0, 60)}`}
+        className="absolute inset-0 cursor-pointer rounded-2xl"
+      />
+      {note.title && <h3 className="pr-16 font-medium leading-snug">{note.title}</h3>}
+      <div
+        className={`note-body mt-1.5 max-h-72 overflow-hidden break-words text-[14px] leading-relaxed ${
+          note.title ? "" : "pr-16"
+        } ${long ? "[mask-image:linear-gradient(to_bottom,black_75%,transparent)]" : ""}`}
+        // Cleaned by the server against an allowlist on the way in and out.
+        dangerouslySetInnerHTML={{ __html: note.html }}
+      />
+      <p className="mt-3 font-mono text-[11px] text-ink-muted">{ago(note.updatedAt)}</p>
+      <div className="absolute right-2 top-2 flex gap-0.5 opacity-0 transition-opacity focus-within:opacity-100 group-hover/note:opacity-100 pointer-coarse:opacity-100">
+        <IconButton label={note.pinned ? "Unpin" : "Pin"} onClick={onPin}>
+          <PushPin size={14} weight={note.pinned ? "fill" : "regular"} aria-hidden="true" />
+        </IconButton>
+        <IconButton label="Delete note" onClick={onDelete} danger>
+          <Trash size={14} aria-hidden="true" />
+        </IconButton>
+      </div>
+    </article>
+  );
+}
+
+type Tool = { label: string; icon: React.ReactNode; keys?: string } & (
+  { command: string } | { block: "h2" | "blockquote" }
+);
+
+const TOOLS: Tool[] = [
+  { label: "Bold", keys: "⌘B", command: "bold", icon: <TextB size={16} weight="bold" aria-hidden="true" /> },
+  { label: "Italic", keys: "⌘I", command: "italic", icon: <TextItalic size={16} aria-hidden="true" /> },
+  {
+    label: "Underline",
+    keys: "⌘U",
+    command: "underline",
+    icon: <TextUnderline size={16} aria-hidden="true" />,
+  },
+  {
+    label: "Strikethrough",
+    command: "strikeThrough",
+    icon: <TextStrikethrough size={16} aria-hidden="true" />,
+  },
+  { label: "Heading", block: "h2", icon: <TextHTwo size={16} aria-hidden="true" /> },
+  {
+    label: "Bulleted list",
+    command: "insertUnorderedList",
+    icon: <ListBullets size={16} aria-hidden="true" />,
+  },
+  {
+    label: "Numbered list",
+    command: "insertOrderedList",
+    icon: <ListNumbers size={16} aria-hidden="true" />,
+  },
+  { label: "Quote", block: "blockquote", icon: <Quotes size={16} aria-hidden="true" /> },
+];
+
+/**
+ * Writing a note. The body is the browser's own rich text editing, so there is
+ * no editor library: the toolbar runs the built-in formatting commands, and
+ * the server keeps only the tags those make. Closing saves.
+ */
+function NoteDialog({
+  note,
+  isNew,
+  onClose,
+  onDelete,
+}: {
+  note: Note;
+  isNew: boolean;
+  /** `changed` is false when nothing was touched, so opening a note to read it saves nothing. */
+  onClose: (after: Pick<Note, "title" | "html" | "pinned">, changed: boolean) => void;
+  onDelete: () => void;
+}) {
+  const dialog = useRef<HTMLDialogElement>(null);
+  const editor = useRef<HTMLDivElement>(null);
+  const changed = useRef(false);
+  const deleted = useRef(false);
+  const downOnBackdrop = useRef(false);
+  const [title, setTitle] = useState(note.title);
+  const [pinned, setPinned] = useState(Boolean(note.pinned));
+  const [empty, setEmpty] = useState(!noteText(note.html));
+  const [active, setActive] = useState<Set<string>>(new Set());
+
+  function refreshTools() {
+    const el = editor.current;
+    const anchor = document.getSelection()?.anchorNode;
+    if (!el || !anchor || !el.contains(anchor)) return;
+    const block = document.queryCommandValue("formatBlock").toLowerCase();
+    setActive(
+      new Set(
+        TOOLS.filter((t) => ("command" in t ? document.queryCommandState(t.command) : block === t.block)).map(
+          (t) => t.label,
+        ),
+      ),
+    );
+  }
+
+  function edited() {
+    changed.current = true;
+    setEmpty(!noteText(editor.current?.innerHTML ?? ""));
+    refreshTools();
+  }
+
+  function apply(tool: Tool) {
+    editor.current?.focus();
+    if ("command" in tool) document.execCommand(tool.command);
+    else document.execCommand("formatBlock", false, active.has(tool.label) ? "<p>" : `<${tool.block}>`);
+    edited();
+  }
+
+  useEffect(() => {
+    const d = dialog.current;
+    const el = editor.current;
+    if (!d || !el || d.open) return;
+    // An empty note starts with a paragraph, so the first line is one like the rest.
+    el.innerHTML = note.html || "<p><br></p>";
+    document.execCommand("defaultParagraphSeparator", false, "p");
+    d.showModal();
+    // A new note is for typing; an old one opens to read, without a keyboard popping up.
+    if (isNew) el.focus();
+    else d.focus();
+  }, [note.html, isNew]);
+
+  useEffect(() => {
+    document.addEventListener("selectionchange", refreshTools);
+    // Leaving the page with the editor open would lose what is in it.
+    const warn = (event: BeforeUnloadEvent) => {
+      if (changed.current) event.preventDefault();
+    };
+    window.addEventListener("beforeunload", warn);
+    return () => {
+      document.removeEventListener("selectionchange", refreshTools);
+      window.removeEventListener("beforeunload", warn);
+    };
+  });
+
+  return (
+    // A click on the backdrop closes it, as long as the press started there too:
+    // selecting text and letting go outside must not. Escape and Done also close.
+    // eslint-disable-next-line jsx-a11y/click-events-have-key-events, jsx-a11y/no-noninteractive-element-interactions
+    <dialog
+      ref={dialog}
+      aria-label={isNew ? "New note" : `Note: ${note.title || "untitled"}`}
+      tabIndex={-1}
+      onMouseDown={(e) => (downOnBackdrop.current = e.target === e.currentTarget)}
+      onClick={(e) => downOnBackdrop.current && e.target === e.currentTarget && e.currentTarget.close()}
+      onClose={() => {
+        if (deleted.current) return;
+        onClose({ title, html: editor.current?.innerHTML ?? note.html, pinned }, changed.current);
+      }}
+      className="m-auto flex max-h-[calc(100dvh-2rem)] w-[min(640px,calc(100vw-2rem))] flex-col rounded-3xl border border-line bg-surface p-0 text-ink backdrop:bg-black/40 backdrop:backdrop-blur-sm"
+    >
+      <div className="flex items-start gap-2 px-5 pt-5 sm:px-6">
+        <input
+          value={title}
+          onChange={(e) => {
+            setTitle(e.target.value);
+            changed.current = true;
+          }}
+          onKeyDown={(e) => {
+            if (e.key === "Enter") {
+              e.preventDefault();
+              editor.current?.focus();
+            }
+          }}
+          placeholder="Title"
+          aria-label="Title"
+          maxLength={300}
+          className="min-w-0 flex-1 rounded-md bg-transparent px-1 py-1 font-display text-xl font-semibold tracking-[-0.01em] placeholder:text-ink-muted"
+        />
+        <button
+          type="button"
+          aria-pressed={pinned}
+          aria-label={pinned ? "Unpin" : "Pin"}
+          title={pinned ? "Unpin" : "Pin"}
+          onClick={() => {
+            setPinned(!pinned);
+            changed.current = true;
+          }}
+          className={`flex h-9 w-9 shrink-0 cursor-pointer items-center justify-center rounded-lg transition-colors hover:bg-surface-sunken ${
+            pinned ? "text-ink" : "text-ink-muted"
+          }`}
+        >
+          <PushPin size={17} weight={pinned ? "fill" : "regular"} aria-hidden="true" />
+        </button>
+      </div>
+
+      <div
+        role="toolbar"
+        aria-label="Formatting"
+        className="mx-4 mt-2 flex flex-wrap gap-0.5 border-b border-line pb-2 sm:mx-5"
+      >
+        {TOOLS.map((tool) => (
+          <button
+            key={tool.label}
+            type="button"
+            aria-label={tool.label}
+            aria-pressed={active.has(tool.label)}
+            title={tool.keys ? `${tool.label} (${tool.keys})` : tool.label}
+            // Keeps the selection in the editor, so the format lands on it.
+            onMouseDown={(e) => e.preventDefault()}
+            onClick={() => apply(tool)}
+            className={`flex h-8 w-8 cursor-pointer items-center justify-center rounded-lg transition-colors ${
+              active.has(tool.label)
+                ? "bg-surface-sunken text-ink"
+                : "text-ink-muted hover:bg-surface-sunken hover:text-ink"
+            }`}
+          >
+            {tool.icon}
+          </button>
+        ))}
+      </div>
+
+      {/* Padded so the focus ring around the editor is not clipped by the scrolling. */}
+      <div className="relative min-h-0 flex-1 overflow-y-auto px-5 py-2 sm:px-6">
+        {empty && (
+          <p
+            aria-hidden="true"
+            className="pointer-events-none absolute top-5 pl-1 text-[15px] text-ink-muted"
+          >
+            Write a note…
+          </p>
+        )}
+        <div
+          ref={editor}
+          role="textbox"
+          aria-multiline="true"
+          aria-label="Note"
+          tabIndex={0}
+          contentEditable
+          suppressContentEditableWarning
+          onInput={edited}
+          onKeyUp={refreshTools}
+          onKeyDown={(e) => {
+            // Enter on an empty line leaves a quote, the way it leaves a list.
+            if (e.key !== "Enter" || e.shiftKey) return;
+            const line = document.getSelection()?.anchorNode;
+            if (
+              document.queryCommandValue("formatBlock").toLowerCase() === "blockquote" &&
+              !line?.textContent
+            ) {
+              e.preventDefault();
+              document.execCommand("formatBlock", false, "<p>");
+              edited();
+            }
+          }}
+          // Pasted and dropped text comes in plain: no stray styles from other
+          // pages, and nothing the editor could not have made itself.
+          onPaste={(e) => {
+            e.preventDefault();
+            document.execCommand("insertText", false, e.clipboardData.getData("text/plain"));
+          }}
+          onDrop={(e) => {
+            e.preventDefault();
+            document.execCommand("insertText", false, e.dataTransfer.getData("text/plain"));
+          }}
+          className="note-body min-h-[40vh] break-words rounded-md px-1 py-3 text-[15px] leading-relaxed sm:min-h-[320px]"
+        />
+      </div>
+
+      <div className="flex items-center justify-between gap-3 border-t border-line px-4 py-3 sm:px-5">
+        <span className="px-1 font-mono text-[11px] text-ink-muted">
+          {isNew ? "New note" : `Edited ${ago(note.updatedAt)}`}
+        </span>
+        <div className="flex items-center gap-1.5">
+          {!isNew && (
+            <button
+              type="button"
+              onClick={() => {
+                deleted.current = true;
+                dialog.current?.close();
+                onDelete();
+              }}
+              className="flex h-9 cursor-pointer items-center gap-1.5 rounded-lg px-3 text-[13px] font-medium text-ink-muted transition-colors hover:text-red-600 dark:hover:text-red-400"
+            >
+              <Trash size={14} aria-hidden="true" />
+              Delete
+            </button>
+          )}
+          <button
+            type="button"
+            onClick={() => dialog.current?.close()}
+            className="h-9 cursor-pointer rounded-lg bg-ink px-4 text-[13px] font-medium text-surface"
+          >
+            Done
+          </button>
+        </div>
+      </div>
+    </dialog>
   );
 }
 
