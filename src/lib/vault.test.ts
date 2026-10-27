@@ -357,7 +357,7 @@ describe("notes", () => {
     ).not.toHaveProperty("notes");
   });
 
-  it("go newest edit first, and keep when they were first written", () => {
+  it("go newest first, keeping their place and first-written time when edited", () => {
     let v = applyAction(EMPTY_VAULT, { type: "putNote", note: note() });
     v = applyAction(v, { type: "putNote", note: note({ id: "n2", title: "Ideas" }) });
     v = applyAction(v, {
@@ -368,9 +368,9 @@ describe("notes", () => {
         updatedAt: "2026-05-05T00:00:00.000Z",
       }),
     });
-    expect(v.notes!.map((n) => n.title)).toEqual(["Shopping", "Ideas"]);
-    expect(v.notes![0].createdAt).toBe("2026-01-01T00:00:00.000Z");
-    expect(v.notes![0].updatedAt).toBe("2026-05-05T00:00:00.000Z");
+    expect(v.notes!.map((n) => n.title)).toEqual(["Ideas", "Shopping"]);
+    expect(v.notes![1].createdAt).toBe("2026-01-01T00:00:00.000Z");
+    expect(v.notes![1].updatedAt).toBe("2026-05-05T00:00:00.000Z");
     expect(applyAction(v, { type: "deleteNote", id: "n2" }).notes!.map((n) => n.id)).toEqual(["n1"]);
     expect(v.marks).toEqual([]);
   });
@@ -385,6 +385,29 @@ describe("notes", () => {
     expect(noteMatches(note(), "li")).toBe(false);
   });
 
+  it("can be filed, tagged and coloured, and move with their category", () => {
+    let v: Vault = { categories: ["Home"], marks: [] };
+    v = applyAction(v, {
+      type: "putNote",
+      note: note({ category: "Work", tags: ["todo"], color: "yellow" }),
+    });
+    expect(v.categories).toEqual(["Home", "Work"]);
+    expect(noteMatches(v.notes![0], "#todo")).toBe(true);
+    v = applyAction(v, { type: "renameCategory", from: "Work", to: "Job" });
+    expect(v.notes![0].category).toBe("Job");
+    v = applyAction(v, { type: "removeCategory", name: "Job" });
+    expect(v.notes![0]).not.toHaveProperty("category");
+    v = applyAction(v, { type: "putNote", note: note({ tags: [], color: undefined, category: "" }) });
+    expect(Object.keys(v.notes![0]).sort()).toEqual(["createdAt", "html", "id", "title", "updatedAt"]);
+  });
+
+  it("move up a level with the links when their folder goes", () => {
+    let v: Vault = { categories: ["Work", "Clients"], marks: [], parents: { Clients: "Work" } };
+    v = applyAction(v, { type: "putNote", note: note({ category: "Clients" }) });
+    v = applyAction(v, { type: "removeCategory", name: "Clients" });
+    expect(v.notes![0].category).toBe("Work");
+  });
+
   it("are parsed from a request without trusting its times", () => {
     expect(
       parseRequest({
@@ -392,6 +415,21 @@ describe("notes", () => {
         note: { id: "abc-1", title: " Hi ", html: "<p>x</p>", pinned: true, createdAt: "1999" },
       }),
     ).toEqual({ type: "saveNote", note: { id: "abc-1", title: "Hi", html: "<p>x</p>", pinned: true } });
+    expect(
+      parseRequest({
+        type: "saveNote",
+        note: { id: "a", html: "", category: " Work ", tags: ["#Todo", 5, "todo"], color: "yellow" },
+      }),
+    ).toEqual({
+      type: "saveNote",
+      note: { id: "a", title: "", html: "", category: "Work", tags: ["todo"], color: "yellow" },
+    });
+    expect(
+      parseRequest({ type: "saveNote", note: { id: "a", html: "", color: "plaid", category: "Inbox" } }),
+    ).toEqual({
+      type: "saveNote",
+      note: { id: "a", title: "", html: "" },
+    });
     expect(parseRequest({ type: "saveNote", note: { id: "a b", html: "" } })).toBeNull();
     expect(parseRequest({ type: "saveNote", note: { id: "a", html: "x".repeat(100_001) } })).toBeNull();
     expect(parseRequest({ type: "saveNote", note: { id: "a" } })).toBeNull();
@@ -418,6 +456,28 @@ describe("cleanHtml", () => {
 
   it("drops the empty paragraphs editing leaves, but keeps blank lines", () => {
     expect(cleanHtml("<p>a</p><p></p><div></div><p><br></p><p>b</p>")).toBe("<p>a</p><p><br></p><p>b</p>");
+  });
+
+  it("keeps web and email links, opening in a new tab, and nothing else", () => {
+    expect(cleanHtml('<a href="https://e.com/a?b=1&c=2" onclick="x()" target="_self">e</a>')).toBe(
+      '<a href="https://e.com/a?b=1&amp;c=2" target="_blank" rel="noopener noreferrer">e</a>',
+    );
+    expect(cleanHtml('<a href="mailto:me@e.com">mail</a>')).toContain('href="mailto:me@e.com"');
+    for (const bad of ["javascript:alert(1)", " JaVaScRiPt:alert(1)", "data:text/html,x", "/relative", ""]) {
+      expect(cleanHtml(`<a href="${bad}">words</a>`)).toBe("words");
+    }
+    expect(cleanHtml('<a href="https://e.com/&quot;onmouseover=&quot;x">q</a>')).not.toMatch(
+      /"\s*onmouseover/,
+    );
+  });
+
+  it("keeps checklists and which items are ticked", () => {
+    const list =
+      '<ul data-type="checklist"><li data-checked="true">milk</li><li data-checked="false">eggs</li></ul>';
+    expect(cleanHtml(list)).toBe(list);
+    expect(cleanHtml('<ul data-type="evil"><li data-checked="yes" data-x="1">a</li></ul>')).toBe(
+      '<ul><li data-checked="false">a</li></ul>',
+    );
   });
 
   it("survives deep nesting", () => {

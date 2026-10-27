@@ -66,14 +66,42 @@ const NOTE_TAGS = new Set([
   "h2",
   "h3",
   "blockquote",
+  "a",
 ]);
 
 const escapeText = (text: string) => text.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+const escapeAttr = (text: string) => escapeText(text).replace(/"/g, "&quot;");
+
+/** A link's address if it is one a note may hold: the web or email, nothing that runs. */
+function safeHref(href: string | undefined): string | null {
+  try {
+    const url = new URL(href ?? "");
+    return ["http:", "https:", "mailto:"].includes(url.protocol) ? url.href : null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * The few attributes kept, each rebuilt rather than copied: a link's address,
+ * a list being a checklist, and whether an item on it is ticked.
+ */
+function attributesOf(name: string, attribs: Record<string, string>): string | null {
+  if (name === "a") {
+    const href = safeHref(attribs.href);
+    return href ? ` href="${escapeAttr(href)}" target="_blank" rel="noopener noreferrer"` : null;
+  }
+  if (name === "ul" && attribs["data-type"] === "checklist") return ' data-type="checklist"';
+  if (name === "li" && attribs["data-checked"]) {
+    return ` data-checked="${attribs["data-checked"] === "true" ? "true" : "false"}"`;
+  }
+  return "";
+}
 
 /**
  * Rebuilds note HTML from an allowlist, so nothing survives that could run:
- * no attributes at all, no tags beyond the editor's, and scripts, styles and
- * comments dropped with their contents. Exported for tests.
+ * no tags beyond the editor's, no attributes beyond the three it sets, and
+ * scripts, styles and comments dropped with their contents. Exported for tests.
  */
 export function cleanHtml(html: string): string {
   const root = cheerio.load(html, null, false).root()[0];
@@ -88,8 +116,11 @@ export function cleanHtml(html: string): string {
         const inner = walk(node.children, depth + 1);
         if (!NOTE_TAGS.has(node.name)) return inner;
         // Editing leaves empty paragraphs behind; a blank line is `<p><br></p>`.
-        if (!inner && (node.name === "p" || node.name === "div")) return "";
-        return `<${node.name}>${inner}</${node.name}>`;
+        if (!inner && (node.name === "p" || node.name === "div" || node.name === "a")) return "";
+        const attributes = attributesOf(node.name, node.attribs);
+        // A link to somewhere a note may not point keeps its words, not the link.
+        if (attributes === null) return inner;
+        return `<${node.name}${attributes}>${inner}</${node.name}>`;
       })
       .join("");
   // Without recursion, which a hostile file could nest deep enough to overflow.
