@@ -209,6 +209,20 @@ export async function performRequest(store: Repo | null, request: VaultRequest):
       };
       return await mutate(store, [{ type: "putNote", note }], "gitmarks: save a note");
     }
+    // The times are the server's: a request only says which link.
+    if (request.type === "archive" || request.type === "restore" || request.type === "touch") {
+      const at = new Date().toISOString();
+      return await mutate(
+        store,
+        [{ ...request, at }],
+        request.type === "touch" ? "gitmarks: opened" : `gitmarks: ${request.type}`,
+      );
+    }
+    // Editing a link counts as using it.
+    if (request.type === "update") {
+      const touch: VaultAction = { type: "touch", ids: [request.id], at: new Date().toISOString() };
+      return await mutate(store, [request, touch], "gitmarks: update");
+    }
     if (request.type === "resetKey") {
       const version = randomBytes(9).toString("base64url");
       return await mutate(store, [{ type: "setKeyVersion", version }], "gitmarks: reset the device key");

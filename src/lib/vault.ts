@@ -25,6 +25,10 @@ export type Mark = {
   /** Lower case, without the `#`. Absent when there are none. */
   tags?: string[];
   createdAt: string;
+  /** The last time it was opened, copied or edited. Absent until the first. */
+  openedAt?: string;
+  /** Set when archived by hand. Archived by being left unused is worked out, never stored. */
+  archivedAt?: string;
   /** Client-only: shown while the server fetches the preview. Never stored. */
   pending?: boolean;
 };
@@ -79,7 +83,34 @@ export type Vault = {
   keyVersion?: string;
   /** Written notes, newest first. Absent until the first one. */
   notes?: Note[];
+  /** Days unused before a link moves to the archive by itself; 0 is never. Absent is the default. */
+  archiveAfterDays?: number;
 };
+
+export const ARCHIVE_AFTER_DAYS = 90;
+const DAY = 86_400_000;
+/**
+ * Links saved before the archive existed start its clock on the day it
+ * shipped, so nobody opens gitmarks to find half their links gone.
+ */
+const ARCHIVE_EPOCH = "2026-10-27T00:00:00.000Z";
+
+export const archiveAfter = (vault: Vault) => vault.archiveAfterDays ?? ARCHIVE_AFTER_DAYS;
+
+/** When a link was last saved, opened, copied, edited or restored. */
+export function lastUsed(mark: Mark): string {
+  return [mark.createdAt, mark.openedAt ?? "", ARCHIVE_EPOCH].reduce((a, b) => (b > a ? b : a));
+}
+
+/** Used in the last day: recent enough that opening it again need not be written down. */
+export const usedToday = (mark: Mark, now = Date.now()) => now - Date.parse(lastUsed(mark)) < DAY;
+
+/** Whether a link is archived, and how: by hand, or by going unused for `days`. */
+export function archived(mark: Mark, days: number, now = Date.now()): "manual" | "unused" | null {
+  if (mark.archivedAt) return "manual";
+  if (days > 0 && !mark.pending && now - Date.parse(lastUsed(mark)) > days * DAY) return "unused";
+  return null;
+}
 
 export const EMPTY_VAULT: Vault = { categories: [], marks: [] };
 
@@ -97,6 +128,13 @@ export type VaultAction =
   | { type: "moveCategory"; name: string; parent: string }
   /** Server only: the version is made there, never taken from a request. */
   | { type: "setKeyVersion"; version: string }
+  /** `at` is set by the server, never taken from a request. */
+  | { type: "archive"; id: string; at: string }
+  /** Out of the archive, and counted as used now, so it does not drift straight back. */
+  | { type: "restore"; id: string; at: string }
+  /** Opened, copied or edited: pushes back when it would be archived for going unused. */
+  | { type: "touch"; ids: string[]; at: string }
+  | { type: "setArchiveAfter"; days: number }
   /** Inserts at the top, or replaces in place by id. A replaced note keeps its `createdAt`. */
   | { type: "putNote"; note: Note }
   | { type: "deleteNote"; id: string };
@@ -110,7 +148,10 @@ export type NoteInput = Pick<Note, "id" | "title" | "html" | "pinned" | "categor
  * asked for rather than supplied, and that a note arrives without its times.
  */
 export type VaultRequest =
-  | Exclude<VaultAction, { type: "put" | "setKeyVersion" | "putNote" }>
+  | Exclude<VaultAction, { type: "put" | "setKeyVersion" | "putNote" | "archive" | "restore" | "touch" }>
+  | { type: "archive"; id: string }
+  | { type: "restore"; id: string }
+  | { type: "touch"; ids: string[] }
   | { type: "add"; urls: string[]; category?: string; note?: string }
   | { type: "resetKey" }
   | { type: "saveNote"; note: NoteInput };
@@ -381,6 +422,32 @@ export function applyAction(vault: Vault, action: VaultAction): Vault {
     }
     case "deleteNote":
       return vault.notes ? { ...vault, notes: vault.notes.filter((n) => n.id !== action.id) } : vault;
+    case "archive":
+      return {
+        ...vault,
+        marks: vault.marks.map((m) => (m.id === action.id ? { ...m, archivedAt: action.at } : m)),
+      };
+    case "restore":
+      return {
+        ...vault,
+        marks: vault.marks.map((m) => {
+          if (m.id !== action.id) return m;
+          const next = { ...m, openedAt: action.at };
+          delete next.archivedAt;
+          return next;
+        }),
+      };
+    case "touch": {
+      const ids = new Set(action.ids);
+      return {
+        ...vault,
+        marks: vault.marks.map((m) =>
+          ids.has(m.id) && (m.openedAt ?? "") < action.at ? { ...m, openedAt: action.at } : m,
+        ),
+      };
+    }
+    case "setArchiveAfter":
+      return { ...vault, archiveAfterDays: action.days };
   }
 }
 
@@ -526,6 +593,17 @@ export function parseRequest(body: unknown): VaultRequest | null {
     }
     case "deleteNote":
       return id ? { type: "deleteNote", id } : null;
+    case "archive":
+    case "restore":
+      return id ? { type: b.type === "archive" ? "archive" : "restore", id } : null;
+    case "touch": {
+      const ids = Array.isArray(b.ids) ? b.ids.filter((x): x is string => typeof x === "string") : [];
+      return ids.length && ids.length <= 200 ? { type: "touch", ids: ids.map((x) => x.slice(0, 100)) } : null;
+    }
+    case "setArchiveAfter":
+      return Number.isInteger(b.days) && (b.days as number) >= 0 && (b.days as number) <= 3650
+        ? { type: "setArchiveAfter", days: b.days as number }
+        : null;
     case "renameCategory": {
       const from = str(b.from, 100);
       const to = cleanCategory(str(b.to, 100) ?? "");

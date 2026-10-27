@@ -58,6 +58,7 @@ export come free from git.
 - **Folders inside folders.** Drag one category onto another to nest it. A folder shows everything inside it, and closes in the sidebar with its arrow.
 - **Notes.** Write things down that aren't links: bold, italics, underline, headings, lists, checklists, quotes and links. File them in your categories, tag them, colour them, and pin the ones you need most. They sit beside your links in each category.
 - **Tags.** Add as many as you like to any card, then click one to see everything that has it, across every category.
+- **Archive.** Links you haven't opened in 3 months move to the Archive by themselves, so Everything stays fresh. Archive or restore any link yourself, and choose how long to wait, or never.
 - **Undo** on every move and delete. Notes on any card. Rename and merge categories.
 - **Reset your key** from Connect if it ever leaks. Every old key stops working at once.
 - **Light and dark**, following your system.
