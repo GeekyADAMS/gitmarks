@@ -2,6 +2,8 @@ import { describe, expect, it } from "vitest";
 import {
   EMPTY_VAULT,
   applyAction,
+  archiveAfter,
+  archived,
   categoryTree,
   matches,
   noteMatches,
@@ -483,5 +485,74 @@ describe("cleanHtml", () => {
   it("survives deep nesting", () => {
     const deep = "<b>".repeat(5000) + "deep" + "</b>".repeat(5000);
     expect(cleanHtml(deep)).toContain("deep");
+  });
+});
+
+describe("archive", () => {
+  const day = 86_400_000;
+  const at = (iso: string) => Date.parse(iso);
+
+  it("leaves links saved before it existed alone for the first stretch", () => {
+    const old = mark({ createdAt: "2024-01-01T00:00:00.000Z" });
+    expect(archived(old, 90, at("2026-11-01T00:00:00.000Z"))).toBeNull();
+    expect(archived(old, 90, at("2027-01-26T00:00:00.000Z") + day)).toBe("unused");
+  });
+
+  it("archives a link left unused for the chosen time, and never when that is 0", () => {
+    const m = mark({ createdAt: "2027-01-01T00:00:00.000Z" });
+    expect(archived(m, 30, at("2027-01-30T00:00:00.000Z"))).toBeNull();
+    expect(archived(m, 30, at("2027-02-01T00:00:00.000Z"))).toBe("unused");
+    expect(archived(m, 0, at("2030-01-01T00:00:00.000Z"))).toBeNull();
+    expect(archived({ ...m, pending: true }, 30, at("2030-01-01T00:00:00.000Z"))).toBeNull();
+  });
+
+  it("counts opening a link as using it, and restoring as opening it", () => {
+    let v: Vault = { categories: [], marks: [mark({ createdAt: "2027-01-01T00:00:00.000Z" })] };
+    const later = at("2027-03-15T00:00:00.000Z");
+    expect(archived(v.marks[0], 30, later)).toBe("unused");
+    v = applyAction(v, { type: "touch", ids: ["a"], at: "2027-03-01T00:00:00.000Z" });
+    expect(archived(v.marks[0], 30, later)).toBeNull();
+    // An older touch arriving late does not wind the clock back.
+    v = applyAction(v, { type: "touch", ids: ["a"], at: "2027-02-01T00:00:00.000Z" });
+    expect(v.marks[0].openedAt).toBe("2027-03-01T00:00:00.000Z");
+  });
+
+  it("archives by hand until restored, whatever else happens to the link", () => {
+    let v: Vault = { categories: [], marks: [mark()] };
+    v = applyAction(v, { type: "archive", id: "a", at: "2027-01-01T00:00:00.000Z" });
+    expect(archived(v.marks[0], 0)).toBe("manual");
+    v = applyAction(v, { type: "touch", ids: ["a"], at: "2027-01-02T00:00:00.000Z" });
+    expect(archived(v.marks[0], 0)).toBe("manual");
+    v = applyAction(v, { type: "restore", id: "a", at: "2027-01-03T00:00:00.000Z" });
+    expect(v.marks[0]).not.toHaveProperty("archivedAt");
+    expect(archived(v.marks[0], 90, at("2027-02-01T00:00:00.000Z"))).toBeNull();
+  });
+
+  it("brings a link back when it is saved again", () => {
+    let v: Vault = { categories: [], marks: [mark({ archivedAt: "2027-01-01T00:00:00.000Z" })] };
+    v = applyAction(v, { type: "put", mark: mark({ id: "fresh", createdAt: "2027-02-01T00:00:00.000Z" }) });
+    expect(v.marks).toHaveLength(1);
+    expect(archived(v.marks[0], 90, at("2027-02-02T00:00:00.000Z"))).toBeNull();
+  });
+
+  it("keeps how long to wait in the vault, three months by default", () => {
+    expect(archiveAfter(EMPTY_VAULT)).toBe(90);
+    expect(archiveAfter(applyAction(EMPTY_VAULT, { type: "setArchiveAfter", days: 0 }))).toBe(0);
+  });
+
+  it("takes only which link from a request, never a time", () => {
+    expect(parseRequest({ type: "archive", id: "a", at: "1999-01-01" })).toEqual({
+      type: "archive",
+      id: "a",
+    });
+    expect(parseRequest({ type: "restore", id: "a" })).toEqual({ type: "restore", id: "a" });
+    expect(parseRequest({ type: "touch", ids: ["a", 3, "b"] })).toEqual({ type: "touch", ids: ["a", "b"] });
+    expect(parseRequest({ type: "touch", ids: [] })).toBeNull();
+    expect(parseRequest({ type: "setArchiveAfter", days: 180 })).toEqual({
+      type: "setArchiveAfter",
+      days: 180,
+    });
+    for (const days of [-1, 1.5, "90", 99999])
+      expect(parseRequest({ type: "setArchiveAfter", days })).toBeNull();
   });
 });

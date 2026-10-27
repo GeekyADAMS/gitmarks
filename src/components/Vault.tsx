@@ -1,6 +1,8 @@
 import { useEffect, useEffectEvent, useId, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import {
+  Archive,
   ArrowClockwise,
+  ArrowCounterClockwise,
   ArrowUpRight,
   CaretRight,
   Check,
@@ -37,6 +39,9 @@ import {
   MAX_TAGS,
   NOTE_COLORS,
   applyAction,
+  archiveAfter,
+  archived,
+  usedToday,
   categoryTree,
   cleanTag,
   extractUrls,
@@ -57,8 +62,25 @@ import {
   type VaultRequest,
 } from "@/lib/vault";
 
-/** `all`, `inbox` and `notes` are views; any other string is a category. */
-type View = { kind: "all" } | { kind: "inbox" } | { kind: "notes" } | { kind: "category"; name: string };
+/** `all`, `inbox`, `notes` and `archive` are views; any other string is a category. */
+type View =
+  | { kind: "all" }
+  | { kind: "inbox" }
+  | { kind: "notes" }
+  | { kind: "archive" }
+  | { kind: "category"; name: string };
+
+const archiveLabel = (days: number) =>
+  ARCHIVE_CHOICES.find(([d]) => d === days)?.[1].toLowerCase() ?? `${days} days`;
+
+/** How long a link may go unused before it is archived, as offered in the Archive. */
+const ARCHIVE_CHOICES: [number, string][] = [
+  [30, "1 month"],
+  [90, "3 months"],
+  [180, "6 months"],
+  [365, "1 year"],
+  [0, "Never"],
+];
 type Toast = { id: number; message: string; undo?: () => void; error?: boolean };
 
 const DRAG_TYPE = "application/x-vault-mark";
@@ -196,6 +218,12 @@ function byDate(marks: Mark[], notes: Note[]): (Mark | Note)[] {
   }
   return out;
 }
+
+/**
+ * Fades what is being dragged in its old place, so the eye follows the copy
+ * under the pointer. A frame late, or the browser's picture of it would fade too.
+ */
+const fadeWhileDragged = (set: (on: boolean) => void) => requestAnimationFrame(() => set(true));
 
 const isTyping = (target: EventTarget | null) =>
   target instanceof HTMLElement &&
@@ -423,6 +451,38 @@ export default function Vault({
 
   const categoryAction = (action: CategoryAction) => send(action, [action]);
 
+  function archive(mark: Mark) {
+    const at = new Date().toISOString();
+    send({ type: "archive", id: mark.id }, [{ type: "archive", id: mark.id, at }]);
+    notify("Archived", { undo: () => restore(mark, true) });
+  }
+
+  function restore(mark: Mark, quiet = false) {
+    const at = new Date().toISOString();
+    send({ type: "restore", id: mark.id }, [{ type: "restore", id: mark.id, at }]);
+    if (!quiet) notify(`Restored to ${mark.category || "Inbox"}`, { undo: () => archive(mark) });
+  }
+
+  const setArchiveAfter = (days: number) =>
+    send({ type: "setArchiveAfter", days }, [{ type: "setArchiveAfter", days }]);
+
+  // Opening or copying a link keeps it out of the archive. Once a day is plenty
+  // for that, and the opens of a few seconds go to the repo as one commit.
+  // ponytail: opens in the last two seconds before the tab closes are lost; a
+  // keepalive flush on pagehide would catch them if that ever matters.
+  const touches = useRef<{ ids: Set<string>; timer?: number }>({ ids: new Set() });
+  function opened(mark: Mark) {
+    if (!archived(mark, archiveAfter(vault)) && usedToday(mark)) return;
+    const t = touches.current;
+    t.ids.add(mark.id);
+    clearTimeout(t.timer);
+    t.timer = window.setTimeout(() => {
+      const ids = [...t.ids];
+      t.ids.clear();
+      send({ type: "touch", ids }, [{ type: "touch", ids, at: new Date().toISOString() }]);
+    }, 2000);
+  }
+
   /** Every old key stops working; the new one is shown in place of it. */
   async function resetKey(): Promise<boolean> {
     try {
@@ -506,35 +566,62 @@ export default function Vault({
   const tree = useMemo(() => categoryTree(vault), [vault]);
 
   // A folder counts everything inside it, however deep.
+  // What is archived, worked out now: a link left unused is archived by the
+  // passing of time alone, with nothing written to the repo.
+  const archiveDays = archiveAfter(vault);
+  const archivedMarks = useMemo(
+    () =>
+      new Map(
+        vault.marks.flatMap((m) => {
+          const how = archived(m, archiveDays);
+          return how ? [[m.id, how] as const] : [];
+        }),
+      ),
+    [vault.marks, archiveDays],
+  );
+  const activeMarks = useMemo(
+    () => vault.marks.filter((m) => !archivedMarks.has(m.id)),
+    [vault.marks, archivedMarks],
+  );
+
   const counts = useMemo(() => {
     const own = new Map<string, number>();
-    for (const m of vault.marks) own.set(m.category, (own.get(m.category) ?? 0) + 1);
+    for (const m of activeMarks) own.set(m.category, (own.get(m.category) ?? 0) + 1);
     // Notes count in their category; a note in none is not in the inbox.
     for (const n of vault.notes ?? []) if (n.category) own.set(n.category, (own.get(n.category) ?? 0) + 1);
-    const map = new Map<string, number>([["", own.get("") ?? 0]]);
+    const map = new Map<string, number>([
+      ["", own.get("") ?? 0],
+      // Everything: what is not archived, links and notes.
+      ["*", activeMarks.length + (vault.notes?.length ?? 0)],
+    ]);
     for (const name of vault.categories) {
       let n = 0;
       for (const c of withDescendants(vault, name)) n += own.get(c) ?? 0;
       map.set(name, n);
     }
     return map;
-  }, [vault]);
+  }, [vault, activeMarks]);
 
   const tags = useMemo(() => {
     const map = new Map<string, number>();
-    for (const item of [...vault.marks, ...(vault.notes ?? [])]) {
+    for (const item of [...activeMarks, ...(vault.notes ?? [])]) {
       for (const t of item.tags ?? []) map.set(t, (map.get(t) ?? 0) + 1);
     }
     return [...map].sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]));
-  }, [vault.marks, vault.notes]);
+  }, [activeMarks, vault.notes]);
 
   // A tag nobody has any more stops filtering.
   const activeTag = tag && tags.some(([t]) => t === tag) ? tag : null;
   const inView =
     view.kind === "category" ? withDescendants(vault, view.name) : new Set(view.kind === "inbox" ? [""] : []);
+  // The archive keeps its links out of every other view, except a search,
+  // which finds them wherever they are.
   const shown = vault.marks.filter(
     (m) =>
-      (view.kind === "all" || inView.has(m.category)) &&
+      (view.kind === "archive"
+        ? archivedMarks.has(m.id)
+        : (view.kind === "all" || inView.has(m.category)) &&
+          (query.trim() !== "" || !archivedMarks.has(m.id))) &&
       (!activeTag || m.tags?.includes(activeTag)) &&
       matches(m, query),
   );
@@ -579,6 +666,7 @@ export default function Vault({
   const shownNotes = notes.filter(
     (n) =>
       view.kind !== "inbox" &&
+      view.kind !== "archive" &&
       (view.kind !== "category" || inView.has(n.category ?? "")) &&
       (!activeTag || n.tags?.includes(activeTag)) &&
       noteMatches(n, query),
@@ -628,6 +716,11 @@ export default function Vault({
           activeTag={activeTag}
           onTag={setTag}
           noteCount={notes.length}
+          archiveCount={archivedMarks.size}
+          onDropArchive={(id) => {
+            const mark = vault.marks.find((m) => m.id === id);
+            if (mark && !archivedMarks.has(id)) archive(mark);
+          }}
         />
 
         <main id="main-content" className="min-w-0 flex-1">
@@ -640,7 +733,9 @@ export default function Vault({
                     ? "Inbox"
                     : activeView.kind === "notes"
                       ? "Notes"
-                      : activeView.name}
+                      : activeView.kind === "archive"
+                        ? "Archive"
+                        : activeView.name}
               </h1>
               <p className="mt-2 flex flex-wrap items-center gap-2 font-mono text-xs tabular-nums text-ink-muted">
                 <span>
@@ -732,7 +827,11 @@ export default function Vault({
             />
           ) : (
             <>
-              <AddBar category={targetCategory} onAdd={add} onNote={() => newNote()} />
+              {activeView.kind === "archive" ? (
+                <ArchiveSettings days={archiveDays} onChange={setArchiveAfter} />
+              ) : (
+                <AddBar category={targetCategory} onAdd={add} onNote={() => newNote()} />
+              )}
 
               {items.length === 0 ? (
                 <Empty
@@ -760,8 +859,17 @@ export default function Vault({
                             onTags={(next) => update(mark, { tags: next })}
                             onTag={setTag}
                             onCarry={() => setCarrying(mark)}
+                            carried={carrying?.id === mark.id}
                             onDelete={() => remove(mark)}
-                            onCopied={() => notify("Link copied")}
+                            onCopied={() => {
+                              opened(mark);
+                              notify("Link copied");
+                            }}
+                            archived={archivedMarks.get(mark.id) ?? null}
+                            archiveDays={archiveDays}
+                            onArchive={() => archive(mark)}
+                            onRestore={() => restore(mark)}
+                            onOpened={() => opened(mark)}
                           />
                         ),
                       )}
@@ -859,6 +967,9 @@ export default function Vault({
         .note-body li + li { margin-top: .15em }
         .note-body blockquote { border-left: 3px solid var(--line-strong); padding-left: .8em; color: var(--ink-muted) }
         .note-body b, .note-body strong { font-weight: 600 }
+        /* The one exception to the global focus ring: in a note, where the caret
+           already shows where you are, a heavy ring around the page distracts. */
+        .note-field:focus-visible { outline: 1px solid var(--line-strong); outline-offset: 2px }
         .note-body a { text-decoration: underline; text-underline-offset: 2px; cursor: pointer }
         /* On a card, clicks fall through to the card (which opens it, or ticks a box),
            except on links, which sit above it. */
@@ -901,6 +1012,8 @@ function Sidebar({
   activeTag,
   onTag,
   noteCount,
+  archiveCount,
+  onDropArchive,
 }: {
   vault: VaultData;
   counts: Map<string, number>;
@@ -914,6 +1027,9 @@ function Sidebar({
   activeTag: string | null;
   onTag: (tag: string | null) => void;
   noteCount: number;
+  archiveCount: number;
+  /** A link dropped on the Archive is archived. */
+  onDropArchive: (id: string) => void;
 }) {
   /** Where a new category is being typed: `""` at the top level, or inside that folder. */
   const [adding, setAdding] = useState<string | null>(null);
@@ -1031,7 +1147,7 @@ function Sidebar({
         <Row
           label="Everything"
           icon={<SquaresFour size={15} aria-hidden="true" />}
-          count={vault.marks.length + noteCount}
+          count={counts.get("*") ?? 0}
           active={isActive({ kind: "all" })}
           onClick={() => onView({ kind: "all" })}
         />
@@ -1051,6 +1167,14 @@ function Sidebar({
           count={noteCount}
           active={isActive({ kind: "notes" })}
           onClick={() => onView({ kind: "notes" })}
+        />
+        <Row
+          label="Archive"
+          icon={<Archive size={15} aria-hidden="true" />}
+          count={archiveCount}
+          active={isActive({ kind: "archive" })}
+          onClick={() => onView({ kind: "archive" })}
+          onDropMark={onDropArchive}
         />
         <DropHeading label="Categories" onDropCategory={(dragged) => nest(dragged, "")} />
         {rows}
@@ -1153,10 +1277,11 @@ function Row({
   folder?: { open: boolean; onToggle: () => void; hue: number };
 }) {
   const [over, setOver] = useState(false);
+  const [dragging, setDragging] = useState(false);
   const droppable = Boolean(onDropMark);
   return (
     <li
-      className={`group/row relative shrink-0 ${style ? INDENT : ""}`}
+      className={`group/row relative shrink-0 transition-opacity ${style ? INDENT : ""} ${dragging ? "opacity-30" : ""}`}
       style={style}
       data-drop={drop}
       onDragOver={(e) => {
@@ -1195,7 +1320,9 @@ function Row({
           if (!onDropCategory) return;
           e.dataTransfer.setData(DRAG_CATEGORY, label);
           e.dataTransfer.effectAllowed = "move";
+          fadeWhileDragged(setDragging);
         }}
+        onDragEnd={() => setDragging(false)}
         className={`flex h-9 w-full cursor-pointer items-center gap-2.5 whitespace-nowrap rounded-xl border px-3 text-left text-[14px] transition-all ${
           over
             ? "scale-[1.03] border-line-strong bg-surface-raised text-ink shadow-sm"
@@ -1457,8 +1584,14 @@ function Card({
   onTags,
   onTag,
   onCarry,
+  carried,
   onDelete,
   onCopied,
+  archived: archivedHow,
+  archiveDays,
+  onArchive,
+  onRestore,
+  onOpened,
 }: {
   mark: Mark;
   tree: Tree;
@@ -1471,10 +1604,19 @@ function Card({
   onTag: (tag: string) => void;
   /** A touch screen's drag: the card was held down, so offer somewhere to drop it. */
   onCarry: () => void;
+  /** Held on a touch screen right now, so it fades in place while the tray is up. */
+  carried: boolean;
   onDelete: () => void;
   onCopied: () => void;
+  archived: "manual" | "unused" | null;
+  archiveDays: number;
+  onArchive: () => void;
+  onRestore: () => void;
+  /** The link was opened, which keeps it out of the archive. */
+  onOpened: () => void;
 }) {
   const [brokenImage, setBrokenImage] = useState(false);
+  const [dragging, setDragging] = useState(false);
   const [editingNote, setEditingNote] = useState(false);
   const [editingTags, setEditingTags] = useState(false);
   const hold = useRef<{ timer: number; x: number; y: number; fired: boolean } | null>(null);
@@ -1515,7 +1657,9 @@ function Card({
         e.dataTransfer.setData(DRAG_TYPE, mark.id);
         e.dataTransfer.setData("text/uri-list", mark.url);
         e.dataTransfer.effectAllowed = "copyMove";
+        fadeWhileDragged(setDragging);
       }}
+      onDragEnd={() => setDragging(false)}
       // Mouse drags are the browser's own. Touch has none, so holding a card
       // still for a moment picks it up instead; moving first is a scroll.
       onTouchStart={(e) => {
@@ -1549,7 +1693,9 @@ function Card({
         }
         hold.current = null;
       }}
-      className="vault-card group relative overflow-hidden rounded-2xl border border-line bg-surface-raised transition-[border-color,box-shadow,transform] [-webkit-touch-callout:none] hover:-translate-y-0.5 hover:border-line-strong hover:shadow-[0_18px_40px_-24px_rgba(0,0,0,0.35)] pointer-coarse:select-none"
+      className={`vault-card group relative overflow-hidden rounded-2xl border border-line bg-surface-raised transition-[border-color,box-shadow,transform,opacity] [-webkit-touch-callout:none] hover:-translate-y-0.5 hover:border-line-strong hover:shadow-[0_18px_40px_-24px_rgba(0,0,0,0.35)] pointer-coarse:select-none ${
+        dragging || carried ? "opacity-30" : ""
+      }`}
     >
       {image && !isX && (
         <img
@@ -1603,6 +1749,8 @@ function Card({
             target="_blank"
             rel="noopener noreferrer"
             draggable={false}
+            onClick={onOpened}
+            onAuxClick={onOpened}
             // Stretched over the whole card, so any blank part of it opens the link.
             className="outline-none after:absolute after:inset-0 after:rounded-2xl after:content-[''] focus-visible:after:outline focus-visible:after:outline-2 focus-visible:after:outline-[var(--focus-ring)]"
           >
@@ -1716,11 +1864,34 @@ function Card({
             >
               <Copy size={15} aria-hidden="true" />
             </IconButton>
+            {!archivedHow && (
+              <IconButton label="Archive" onClick={onArchive}>
+                <Archive size={15} aria-hidden="true" />
+              </IconButton>
+            )}
             <IconButton label="Delete" onClick={onDelete} danger>
               <Trash size={15} aria-hidden="true" />
             </IconButton>
           </div>
         </footer>
+        {archivedHow && (
+          <div className="relative z-10 mt-3 flex items-center gap-2 rounded-xl bg-surface-sunken px-3 py-2 text-[12.5px] text-ink-muted">
+            <Archive size={14} aria-hidden="true" className="shrink-0" />
+            <span className="min-w-0 flex-1">
+              {archivedHow === "manual"
+                ? `Archived ${mark.archivedAt ? ago(mark.archivedAt) : ""}`.trim()
+                : `Unused for over ${archiveLabel(archiveDays)}`}
+            </span>
+            <button
+              type="button"
+              onClick={onRestore}
+              className="flex h-7 shrink-0 cursor-pointer items-center gap-1 rounded-lg border border-line-strong bg-surface-raised px-2 text-[12px] font-medium text-ink transition-colors hover:bg-surface"
+            >
+              <ArrowCounterClockwise size={12} aria-hidden="true" />
+              Restore
+            </button>
+          </div>
+        )}
       </div>
     </article>
   );
@@ -1987,23 +2158,65 @@ function Empty({ view, searching, hasAny }: { view: View; searching: boolean; ha
   const kbd = "rounded-md border border-line bg-surface-raised px-1.5 py-0.5 font-mono text-[12px] text-ink";
   return (
     <div className="mt-6 flex flex-col items-center justify-center rounded-3xl border border-dashed border-line-strong px-6 py-24 text-center">
-      <LinkSimple size={28} aria-hidden="true" className="text-ink-muted" />
+      {view.kind === "archive" ? (
+        <Archive size={28} aria-hidden="true" className="text-ink-muted" />
+      ) : (
+        <LinkSimple size={28} aria-hidden="true" className="text-ink-muted" />
+      )}
       <p className="mt-4 font-display text-xl font-semibold tracking-tight">
         {searching
           ? "Nothing matches that."
-          : !hasAny
-            ? "Your vault is empty."
-            : view.kind === "category"
-              ? `Nothing in ${view.name} yet.`
-              : "Inbox zero."}
+          : view.kind === "archive"
+            ? "Nothing archived."
+            : !hasAny
+              ? "Your vault is empty."
+              : view.kind === "category"
+                ? `Nothing in ${view.name} yet.`
+                : "Inbox zero."}
       </p>
-      {!searching && (
+      {!searching && view.kind === "archive" && (
+        <p className="mt-2 max-w-sm text-[14px] leading-relaxed text-ink-muted">
+          Archive a link with its archive button, or drag it here onto Archive in the sidebar.
+        </p>
+      )}
+      {!searching && view.kind !== "archive" && (
         <p className="mt-2 max-w-sm text-[14px] leading-relaxed text-ink-muted">
           Press <kbd className={kbd}>⌘V</kbd> anywhere to save a link
           {view.kind === "category" ? " here" : ""}, drag one in from another tab, or drop cards onto a
           category to sort them.
         </p>
       )}
+    </div>
+  );
+}
+
+/** What the archive is for, and how long a link may go unused before it lands here. */
+function ArchiveSettings({ days, onChange }: { days: number; onChange: (days: number) => void }) {
+  const choices = ARCHIVE_CHOICES.some(([d]) => d === days)
+    ? ARCHIVE_CHOICES
+    : [...ARCHIVE_CHOICES, [days, `${days} days`] as [number, string]];
+  return (
+    <div className="mb-6 mt-6 flex flex-wrap items-center gap-x-6 gap-y-3 rounded-2xl border border-line bg-surface-raised px-4 py-3.5">
+      <p className="min-w-[16rem] flex-1 text-[14px] leading-relaxed text-ink-muted">
+        {days
+          ? `Links you haven't opened for ${archiveLabel(days)} move here by themselves, so Everything stays fresh.`
+          : "Links only come here when you archive them."}{" "}
+        Restore one to bring it back. Search still finds them.
+      </p>
+      <label className="flex shrink-0 items-center gap-2 text-[13px] text-ink">
+        Archive unused links after
+        <select
+          value={days}
+          onChange={(e) => onChange(Number(e.target.value))}
+          className="h-9 cursor-pointer rounded-lg border border-line-strong bg-surface px-2 text-[13px] text-ink"
+        >
+          {choices.map(([d, label]) => (
+            <option key={d} value={d}>
+              {label}
+            </option>
+          ))}
+        </select>
+      </label>
     </div>
   );
 }
@@ -2147,15 +2360,18 @@ function NoteCard({
 }) {
   const long = note.html.length > 700;
   const category = note.category ?? "";
+  const [dragging, setDragging] = useState(false);
   return (
     <article
       draggable
       onDragStart={(e) => {
         e.dataTransfer.setData(DRAG_TYPE, note.id);
         e.dataTransfer.effectAllowed = "move";
+        fadeWhileDragged(setDragging);
       }}
+      onDragEnd={() => setDragging(false)}
       style={note.color ? tint(note.color) : undefined}
-      className={`vault-card group/note relative rounded-2xl border p-4 shadow-[0_1px_2px_rgba(0,0,0,0.03)] transition-colors ${
+      className={`vault-card group/note relative rounded-2xl border p-4 shadow-[0_1px_2px_rgba(0,0,0,0.03)] transition-[border-color,opacity] ${dragging ? "opacity-30" : ""} ${
         note.color ? "note-tint" : "border-line bg-surface-raised hover:border-line-strong"
       }`}
     >
@@ -2506,7 +2722,7 @@ function NoteDialog({
           placeholder="Title"
           aria-label="Title"
           maxLength={300}
-          className="min-w-0 flex-1 rounded-md bg-transparent px-1 py-1 font-display text-xl font-semibold tracking-[-0.01em] placeholder:text-ink-muted"
+          className="note-field min-w-0 flex-1 rounded-md bg-transparent px-1 py-1 font-display text-xl font-semibold tracking-[-0.01em] placeholder:text-ink-muted"
         />
         <button
           type="button"
@@ -2542,7 +2758,7 @@ function NoteDialog({
             onClick={() => apply(tool)}
             className={`flex h-8 w-8 cursor-pointer items-center justify-center rounded-lg transition-colors ${
               active.has(tool.label)
-                ? "bg-surface-sunken/80 text-ink"
+                ? "bg-ink text-surface"
                 : "text-ink-muted hover:bg-surface-sunken/70 hover:text-ink"
             }`}
           >
@@ -2612,7 +2828,7 @@ function NoteDialog({
             e.preventDefault();
             document.execCommand("insertText", false, e.dataTransfer.getData("text/plain"));
           }}
-          className="note-body min-h-[36vh] break-words rounded-md px-1 py-3 text-[15px] leading-relaxed sm:min-h-[280px]"
+          className="note-body note-field min-h-[36vh] break-words rounded-md px-1 py-3 text-[15px] leading-relaxed sm:min-h-[280px]"
         />
       </div>
 
