@@ -342,11 +342,15 @@ export function applyAction(vault: Vault, action: VaultAction): Vault {
 
 const ENTITIES: Record<string, string> = { amp: "&", lt: "<", gt: ">", quot: '"', "#39": "'", nbsp: " " };
 
-/** A note's words without the formatting, for search and for telling an empty note. */
+/**
+ * A note's words without the formatting, for search and for telling an empty
+ * note. Plain text out, never HTML: it is only ever matched or shown as text.
+ */
 export function noteText(html: string): string {
   return html
-    .replace(/<\/(p|div|li|h2|h3|blockquote)>|<br\s*\/?>/gi, "\n")
-    .replace(/<[^>]*>/g, "")
+    .split(/<\/(?:p|div|li|h2|h3|blockquote)>|<br\s*\/?>/i)
+    .map((line) => line.split(/<[^>]*>/).join(""))
+    .join("\n")
     .replace(/&(amp|lt|gt|quot|#39|nbsp);/g, (_, e: string) => ENTITIES[e])
     .trim();
 }
