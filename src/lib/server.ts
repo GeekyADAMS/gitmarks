@@ -10,6 +10,7 @@ import { env } from "./env";
 import {
   EMPTY_VAULT,
   applyAction,
+  cleanReminder,
   siteOf,
   xStatus,
   type Mark,
@@ -34,7 +35,8 @@ function parse(text: string): Vault {
   if (
     !Array.isArray(data?.categories) ||
     !Array.isArray(data?.marks) ||
-    (data.notes !== undefined && !Array.isArray(data.notes))
+    (data.notes !== undefined && !Array.isArray(data.notes)) ||
+    (data.reminders !== undefined && !Array.isArray(data.reminders))
   ) {
     throw new Error(`${FILE} is not a gitmarks vault.`);
   }
@@ -43,6 +45,8 @@ function parse(text: string): Vault {
   if (data.notes) {
     data.notes = data.notes.map((n) => ({ ...n, html: cleanHtml(typeof n.html === "string" ? n.html : "") }));
   }
+  // A reminder edited by hand into something unreadable is dropped, not trusted.
+  if (data.reminders) data.reminders = data.reminders.flatMap((r) => cleanReminder(r) ?? []);
   return data;
 }
 

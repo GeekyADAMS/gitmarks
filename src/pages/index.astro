@@ -5,7 +5,7 @@ import Landing from "@/components/Landing.astro";
 import Login from "@/components/Login";
 import Vault from "@/components/Vault";
 import { secret } from "@/lib/auth";
-import { owner, keyFor } from "@/lib/owner";
+import { owner, keyFor, calendarKeyFor } from "@/lib/owner";
 import { loadVault, publicRepoProblem } from "@/lib/server";
 import { githubConfig } from "@/lib/github";
 import { isHosted } from "@/lib/hosted";
@@ -50,7 +50,14 @@ if (me && !publicRepo) {
   ) : publicRepo ? (
     <Setup publicRepo={publicRepo} hosted={hosted} />
   ) : me ? (
-    <Vault client:load initial={initial} loadError={error} deviceKey={keyFor(me, initial)} hosted={hosted} />
+    <Vault
+      client:load
+      initial={initial}
+      loadError={error}
+      deviceKey={keyFor(me, initial)}
+      calendarKey={calendarKeyFor(me, initial)}
+      hosted={hosted}
+    />
   ) : hosted ? (
     <Landing />
   ) : (

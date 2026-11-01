@@ -4,6 +4,7 @@ import {
   ArrowClockwise,
   ArrowCounterClockwise,
   ArrowUpRight,
+  Bell,
   CaretRight,
   Check,
   CheckSquare,
@@ -38,6 +39,7 @@ import {
   MAX_BATCH,
   MAX_TAGS,
   NOTE_COLORS,
+  REMINDER_COUNTS,
   applyAction,
   archiveAfter,
   archived,
@@ -56,18 +58,20 @@ import {
   type MarkPatch,
   type Note,
   type NoteColor,
+  type Reminder,
   type NoteInput,
   type Vault as VaultData,
   type VaultAction,
   type VaultRequest,
 } from "@/lib/vault";
 
-/** `all`, `inbox`, `notes` and `archive` are views; any other string is a category. */
+/** `all`, `inbox`, `notes`, `archive` and `reminders` are views; any other string is a category. */
 type View =
   | { kind: "all" }
   | { kind: "inbox" }
   | { kind: "notes" }
   | { kind: "archive" }
+  | { kind: "reminders" }
   | { kind: "category"; name: string };
 
 const archiveLabel = (days: number) =>
@@ -235,12 +239,15 @@ export default function Vault({
   initial,
   loadError,
   deviceKey,
+  calendarKey: initialCalendarKey,
   hosted,
 }: {
   initial: VaultData;
   loadError?: string;
   /** What the extension and the Shortcut send. Shown in Connect, to copy. */
   deviceKey: string;
+  /** The key in the reminders calendar link. Reset with the device key. */
+  calendarKey: string;
   hosted: boolean;
 }) {
   // What the server last confirmed, plus changes still in flight on top of it.
@@ -256,6 +263,7 @@ export default function Vault({
   const [openNote, setOpenNote] = useState<Note | null>(null);
   const [query, setQuery] = useState("");
   const [key, setKey] = useState(deviceKey);
+  const [calendarKey, setCalendarKey] = useState(initialCalendarKey);
   // On a touch screen: the card held down, and the drop target under the finger.
   const [carrying, setCarrying] = useState<Mark | null>(null);
   const [hovering, setHovering] = useState<string | null>(null);
@@ -463,6 +471,14 @@ export default function Vault({
     if (!quiet) notify(`Restored to ${mark.category || "Inbox"}`, { undo: () => archive(mark) });
   }
 
+  const saveReminder = (reminder: Reminder) =>
+    send({ type: "putReminder", reminder }, [{ type: "putReminder", reminder }]);
+
+  function deleteReminder(reminder: Reminder) {
+    send({ type: "deleteReminder", id: reminder.id }, [{ type: "deleteReminder", id: reminder.id }]);
+    notify("Reminder deleted", { undo: () => saveReminder(reminder) });
+  }
+
   const setArchiveAfter = (days: number) =>
     send({ type: "setArchiveAfter", days }, [{ type: "setArchiveAfter", days }]);
 
@@ -495,11 +511,13 @@ export default function Vault({
         ok?: boolean;
         vault?: VaultData;
         key?: string;
+        calendarKey?: string;
         error?: string;
       };
       if (!result.ok || !result.key || !result.vault) throw new Error(result.error);
       setBase(result.vault);
       setKey(result.key);
+      setCalendarKey(result.calendarKey ?? "");
       return true;
     } catch (error) {
       notify(error instanceof Error && error.message ? error.message : "Could not reset the key.", {
@@ -717,6 +735,7 @@ export default function Vault({
           onTag={setTag}
           noteCount={notes.length}
           archiveCount={archivedMarks.size}
+          reminderCount={vault.reminders?.length ?? 0}
           onDropArchive={(id) => {
             const mark = vault.marks.find((m) => m.id === id);
             if (mark && !archivedMarks.has(id)) archive(mark);
@@ -735,13 +754,20 @@ export default function Vault({
                       ? "Notes"
                       : activeView.kind === "archive"
                         ? "Archive"
-                        : activeView.name}
+                        : activeView.kind === "reminders"
+                          ? "Reminders"
+                          : activeView.name}
               </h1>
               <p className="mt-2 flex flex-wrap items-center gap-2 font-mono text-xs tabular-nums text-ink-muted">
                 <span>
                   {[
-                    activeView.kind !== "notes" && `${shown.length} ${shown.length === 1 ? "link" : "links"}`,
-                    (activeView.kind === "notes" || shownNotes.length > 0) &&
+                    activeView.kind === "reminders" &&
+                      `${vault.reminders?.length ?? 0} ${vault.reminders?.length === 1 ? "reminder" : "reminders"}`,
+                    activeView.kind !== "notes" &&
+                      activeView.kind !== "reminders" &&
+                      `${shown.length} ${shown.length === 1 ? "link" : "links"}`,
+                    (activeView.kind === "notes" ||
+                      (activeView.kind !== "reminders" && shownNotes.length > 0)) &&
                       `${shownNotes.length} ${shownNotes.length === 1 ? "note" : "notes"}`,
                   ]
                     .filter(Boolean)
@@ -817,7 +843,16 @@ export default function Vault({
             </div>
           </header>
 
-          {activeView.kind === "notes" ? (
+          {activeView.kind === "reminders" ? (
+            <Reminders
+              reminders={vault.reminders ?? []}
+              tree={tree}
+              tags={tags.map(([t]) => t)}
+              calendarKey={calendarKey}
+              onSave={saveReminder}
+              onDelete={deleteReminder}
+            />
+          ) : activeView.kind === "notes" ? (
             <Notes
               notes={shownNotes}
               columnCount={columnCount}
@@ -1013,6 +1048,7 @@ function Sidebar({
   onTag,
   noteCount,
   archiveCount,
+  reminderCount,
   onDropArchive,
 }: {
   vault: VaultData;
@@ -1028,6 +1064,7 @@ function Sidebar({
   onTag: (tag: string | null) => void;
   noteCount: number;
   archiveCount: number;
+  reminderCount: number;
   /** A link dropped on the Archive is archived. */
   onDropArchive: (id: string) => void;
 }) {
@@ -1175,6 +1212,13 @@ function Sidebar({
           active={isActive({ kind: "archive" })}
           onClick={() => onView({ kind: "archive" })}
           onDropMark={onDropArchive}
+        />
+        <Row
+          label="Reminders"
+          icon={<Bell size={15} aria-hidden="true" />}
+          count={reminderCount}
+          active={isActive({ kind: "reminders" })}
+          onClick={() => onView({ kind: "reminders" })}
         />
         <DropHeading label="Categories" onDropCategory={(dragged) => nest(dragged, "")} />
         {rows}
@@ -2218,6 +2262,324 @@ function ArchiveSettings({ days, onChange }: { days: number; onChange: (days: nu
         </select>
       </label>
     </div>
+  );
+}
+
+// --- Reminders ---------------------------------------------------------------
+
+const WEEKDAYS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
+/** The week as it is shown: Monday first. */
+const WEEK = [1, 2, 3, 4, 5, 6, 0];
+const DAY_PRESETS: [string, number[]][] = [
+  ["Every day", [0, 1, 2, 3, 4, 5, 6]],
+  ["Weekdays", [1, 2, 3, 4, 5]],
+  ["Weekends", [0, 6]],
+];
+
+function daysLabel(days: number[]) {
+  const preset = DAY_PRESETS.find(([, d]) => d.join() === days.join());
+  if (preset) return preset[0];
+  return WEEK.filter((d) => days.includes(d))
+    .map((d) => WEEKDAYS[d])
+    .join(", ");
+}
+
+const hereZone = () => Intl.DateTimeFormat().resolvedOptions().timeZone;
+/** For values that never change once the page is loaded. */
+const noSubscribe = () => () => {};
+
+/**
+ * Reminders are delivered by the calendar: one link to subscribe to, and each
+ * reminder shows up there as events listing the links to revisit.
+ */
+function Reminders({
+  reminders,
+  tree,
+  tags,
+  calendarKey,
+  onSave,
+  onDelete,
+}: {
+  reminders: Reminder[];
+  tree: Tree;
+  tags: string[];
+  calendarKey: string;
+  onSave: (reminder: Reminder) => void;
+  onDelete: (reminder: Reminder) => void;
+}) {
+  const [editing, setEditing] = useState<Reminder | null>(null);
+  const origin = useSyncExternalStore(
+    noSubscribe,
+    () => window.location.origin,
+    () => "",
+  );
+  const zone = useSyncExternalStore(noSubscribe, hereZone, () => "");
+  const feed = `${origin}/api/calendar?key=${encodeURIComponent(calendarKey)}`;
+  const webcal = feed.replace(/^https?:/, "webcal:");
+  const button =
+    "flex h-9 shrink-0 cursor-pointer items-center gap-1.5 rounded-lg border border-line-strong px-3 text-[13px] font-medium text-ink transition-colors hover:bg-surface-sunken";
+
+  const fresh = (): Reminder => ({
+    id: crypto.randomUUID(),
+    days: [0, 1, 2, 3, 4, 5, 6],
+    time: "18:00",
+    tz: zone,
+    count: 3,
+  });
+
+  const form = (reminder: Reminder) => (
+    <ReminderForm
+      key={reminder.id}
+      reminder={reminder}
+      tree={tree}
+      tags={tags}
+      onCancel={() => setEditing(null)}
+      onSave={(next) => {
+        onSave({ ...next, tz: zone || next.tz });
+        setEditing(null);
+      }}
+    />
+  );
+
+  return (
+    <div className="mt-6 flex max-w-2xl flex-col gap-4">
+      {calendarKey && (
+        <section className="rounded-2xl border border-line bg-surface-raised px-4 py-4">
+          <p className="text-[14px] leading-relaxed text-ink-muted">
+            Reminders reach you through your calendar. Add the gitmarks calendar once, and each reminder
+            appears there as an event listing the links to revisit, the ones you haven&apos;t opened for
+            longest first.
+          </p>
+          <div className="mt-3.5 flex flex-wrap gap-2">
+            <a href={webcal} className={button}>
+              Add to Apple Calendar
+            </a>
+            <a
+              href={`https://calendar.google.com/calendar/r?cid=${encodeURIComponent(webcal)}`}
+              target="_blank"
+              rel="noopener noreferrer"
+              className={button}
+            >
+              Add to Google Calendar
+            </a>
+            <CopyButton value={feed} label="Copy calendar link" />
+          </div>
+          <p className="mt-3 text-[13px] leading-relaxed text-ink-muted">
+            Google Calendar may not alert you for calendars added by link. On Android, add the link with an
+            app like ICSx⁵ instead, which keeps the alerts. Reset key in Connect turns this link off too.
+          </p>
+        </section>
+      )}
+
+      {reminders.length === 0 && !editing ? (
+        <div className="flex flex-col items-center justify-center rounded-3xl border border-dashed border-line-strong px-6 py-20 text-center">
+          <Bell size={28} aria-hidden="true" className="text-ink-muted" />
+          <p className="mt-4 font-display text-xl font-semibold tracking-tight">No reminders yet.</p>
+          <p className="mt-2 max-w-sm text-[14px] leading-relaxed text-ink-muted">
+            Get a few links back in front of you every evening, every Friday, or whenever suits you.
+          </p>
+          <button
+            type="button"
+            onClick={() => setEditing(fresh())}
+            className="mt-5 flex h-9 cursor-pointer items-center gap-1.5 rounded-lg bg-ink px-3.5 text-[13px] font-medium text-surface"
+          >
+            <Plus size={14} aria-hidden="true" />
+            New reminder
+          </button>
+        </div>
+      ) : (
+        <ul className="flex flex-col gap-2">
+          {reminders.map((r) =>
+            editing?.id === r.id ? (
+              <li key={r.id}>{form(editing)}</li>
+            ) : (
+              <li
+                key={r.id}
+                className="flex items-center gap-3 rounded-2xl border border-line bg-surface-raised py-3 pl-4 pr-2.5"
+              >
+                <Bell size={16} aria-hidden="true" className="shrink-0 text-ink-muted" />
+                <div className="min-w-0 flex-1">
+                  <p className="text-[15px] font-medium">
+                    {daysLabel(r.days)} at {r.time}
+                  </p>
+                  <p className="mt-0.5 truncate text-[13px] text-ink-muted">
+                    {r.count} {r.count === 1 ? "link" : "links"} from {r.from || "everything"}
+                    {zone && r.tz !== zone && ` · ${r.tz} time`}
+                  </p>
+                </div>
+                <IconButton label="Edit reminder" onClick={() => setEditing(r)}>
+                  <PencilSimple size={15} aria-hidden="true" />
+                </IconButton>
+                <IconButton label="Delete reminder" danger onClick={() => onDelete(r)}>
+                  <Trash size={15} aria-hidden="true" />
+                </IconButton>
+              </li>
+            ),
+          )}
+          {editing && !reminders.some((r) => r.id === editing.id) ? (
+            <li>{form(editing)}</li>
+          ) : (
+            <li>
+              <button
+                type="button"
+                onClick={() => setEditing(fresh())}
+                className="flex h-11 w-full cursor-pointer items-center gap-2 rounded-2xl border border-dashed border-line-strong px-4 text-[14px] text-ink-muted transition-colors hover:text-ink"
+              >
+                <Plus size={15} aria-hidden="true" />
+                New reminder
+              </button>
+            </li>
+          )}
+        </ul>
+      )}
+    </div>
+  );
+}
+
+function ReminderForm({
+  reminder,
+  tree,
+  tags,
+  onSave,
+  onCancel,
+}: {
+  reminder: Reminder;
+  tree: Tree;
+  tags: string[];
+  onSave: (reminder: Reminder) => void;
+  onCancel: () => void;
+}) {
+  const [draft, setDraft] = useState(reminder);
+  const set = (patch: Partial<Reminder>) => setDraft((d) => ({ ...d, ...patch }));
+  const toggleDay = (day: number) =>
+    set({
+      days: draft.days.includes(day)
+        ? draft.days.filter((d) => d !== day)
+        : [...draft.days, day].sort((a, b) => a - b),
+    });
+  const select =
+    "h-9 cursor-pointer rounded-lg border border-line-strong bg-surface px-2 text-[13px] text-ink";
+  const chip = (on: boolean) =>
+    `h-8 cursor-pointer rounded-lg px-2.5 text-[13px] font-medium transition-colors ${
+      on ? "bg-ink text-surface" : "border border-line-strong text-ink hover:bg-surface-sunken"
+    }`;
+  const label = "mb-2 font-mono text-[11px] uppercase tracking-[0.14em] text-ink-muted";
+
+  return (
+    <form
+      onSubmit={(e) => {
+        e.preventDefault();
+        if (draft.days.length && draft.time) onSave(draft);
+      }}
+      className="flex flex-col gap-5 rounded-2xl border border-line-strong bg-surface-raised p-4"
+    >
+      <fieldset>
+        <legend className={label}>Days</legend>
+        <div className="flex flex-wrap gap-1.5">
+          {WEEK.map((d) => (
+            <button
+              key={d}
+              type="button"
+              aria-pressed={draft.days.includes(d)}
+              onClick={() => toggleDay(d)}
+              className={chip(draft.days.includes(d))}
+            >
+              {WEEKDAYS[d]}
+            </button>
+          ))}
+        </div>
+        <div className="mt-2 flex flex-wrap gap-3">
+          {DAY_PRESETS.map(([name, days]) => (
+            <button
+              key={name}
+              type="button"
+              onClick={() => set({ days })}
+              className="cursor-pointer text-[13px] text-ink-muted underline-offset-2 hover:text-ink hover:underline"
+            >
+              {name}
+            </button>
+          ))}
+        </div>
+      </fieldset>
+
+      <div className="flex flex-wrap gap-x-6 gap-y-4">
+        <label className="flex flex-col">
+          <span className={label}>Time</span>
+          <input
+            type="time"
+            required
+            value={draft.time}
+            onChange={(e) => set({ time: e.target.value })}
+            className={`${select} cursor-text`}
+          />
+        </label>
+        <label className="flex flex-col">
+          <span className={label}>How many</span>
+          <select
+            value={draft.count}
+            onChange={(e) => set({ count: Number(e.target.value) })}
+            className={select}
+          >
+            {REMINDER_COUNTS.map((n) => (
+              <option key={n} value={n}>
+                {n} {n === 1 ? "link" : "links"}
+              </option>
+            ))}
+          </select>
+        </label>
+        <label className="flex min-w-0 flex-col">
+          <span className={label}>From</span>
+          <select
+            value={draft.from ?? ""}
+            onChange={(e) => {
+              const next: Reminder = { ...draft, from: e.target.value };
+              if (!next.from) delete next.from;
+              setDraft(next);
+            }}
+            className={`${select} max-w-64`}
+          >
+            <option value="">Everything</option>
+            {tree.length > 0 && (
+              <optgroup label="Categories">
+                {tree.map(({ name, depth }) => (
+                  <option key={name} value={name}>
+                    {"\u00a0\u00a0".repeat(depth)}
+                    {name}
+                  </option>
+                ))}
+              </optgroup>
+            )}
+            {tags.length > 0 && (
+              <optgroup label="Tags">
+                {tags.map((t) => (
+                  <option key={t} value={`#${t}`}>
+                    #{t}
+                  </option>
+                ))}
+              </optgroup>
+            )}
+          </select>
+        </label>
+      </div>
+
+      <div className="flex items-center gap-2">
+        <button
+          type="submit"
+          disabled={!draft.days.length}
+          className="flex h-9 cursor-pointer items-center rounded-lg bg-ink px-3.5 text-[13px] font-medium text-surface disabled:cursor-default disabled:opacity-40"
+        >
+          Save reminder
+        </button>
+        <button
+          type="button"
+          onClick={onCancel}
+          className="flex h-9 cursor-pointer items-center rounded-lg px-3 text-[13px] text-ink-muted hover:text-ink"
+        >
+          Cancel
+        </button>
+        {!draft.days.length && <span className="text-[13px] text-ink-muted">Pick at least one day.</span>}
+      </div>
+    </form>
   );
 }
 

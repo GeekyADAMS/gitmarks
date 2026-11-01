@@ -1,4 +1,13 @@
-import { SESSION_COOKIE, checkBearer, deviceKey, readDeviceKey, readSession, type Claims } from "./auth";
+import {
+  SESSION_COOKIE,
+  calendarKey,
+  checkBearer,
+  deviceKey,
+  readCalendarKey,
+  readDeviceKey,
+  readSession,
+  type Claims,
+} from "./auth";
 import { githubConfig, type Repo } from "./github";
 import { installationToken, isHosted } from "./hosted";
 import type { Vault } from "./vault";
@@ -20,12 +29,22 @@ export async function owner(request: Request, cookies: Cookies): Promise<Owner |
   const claims = session ?? key;
   const viaKey = Boolean(key);
 
-  if (!isHosted()) {
-    // A device set up before keys existed sends the secret itself, which no reset can revoke.
-    if (claims) return { claims, store: githubConfig(), viaKey };
+  // A device set up before keys existed sends the secret itself, which no reset can revoke.
+  if (!isHosted() && !claims) {
     return checkBearer(header) ? { claims: {}, store: githubConfig(), viaKey: false } : null;
   }
-  if (!claims?.i || !claims.r) return null;
+  return claims ? withStore(claims, viaKey) : null;
+}
+
+/** Whose reminders a calendar link is for. Like a device key, it has to be checked against the vault. */
+export async function calendarOwner(key: string | null): Promise<Owner | null> {
+  const claims = readCalendarKey(key);
+  return claims ? withStore(claims, true) : null;
+}
+
+async function withStore(claims: Claims, viaKey: boolean): Promise<Owner | null> {
+  if (!isHosted()) return { claims, store: githubConfig(), viaKey };
+  if (!claims.i || !claims.r) return null;
   const token = await installationToken(claims.i, claims.r);
   return token ? { claims, store: { token, repo: claims.r }, viaKey } : null;
 }
@@ -36,3 +55,7 @@ export const keyIsCurrent = (o: Owner, vault: Vault) =>
 
 /** The key a signed-in owner pastes into the extension and the Shortcut. */
 export const keyFor = (o: Owner, vault: Vault) => deviceKey({ ...o.claims, k: vault.keyVersion }) ?? "";
+
+/** The key in the owner's reminders calendar link. */
+export const calendarKeyFor = (o: Owner, vault: Vault) =>
+  calendarKey({ ...o.claims, k: vault.keyVersion }) ?? "";
