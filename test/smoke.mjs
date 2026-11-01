@@ -359,6 +359,33 @@ console.log("hosted");
     },
   );
 
+  await check("the reminders calendar link only reads reminders, and a reset turns it off", async () => {
+    const reset = async () =>
+      (
+        await fetch(`${base}/api/vault`, {
+          method: "POST",
+          headers: { cookie, origin: base, "content-type": "application/json" },
+          body: JSON.stringify({ type: "resetKey" }),
+        })
+      ).json();
+    const feed = (k) => fetch(`${base}/api/calendar?key=${encodeURIComponent(k)}`);
+    const first = await reset();
+    const res = await feed(first.calendarKey);
+    assert.equal(res.status, 200);
+    assert.match(res.headers.get("content-type") ?? "", /text\/calendar/);
+    assert.match(await res.text(), /^BEGIN:VCALENDAR/);
+    // Each key does its own job only.
+    const asBearer = await fetch(`${base}/api/vault`, {
+      headers: { authorization: `Bearer gm_${first.calendarKey}` },
+    });
+    assert.equal(asBearer.status, 404);
+    assert.equal((await feed(first.key.replace(/^gm_/, ""))).status, 404);
+    const second = await reset();
+    assert.equal((await feed(first.calendarKey)).status, 404);
+    assert.equal((await feed(second.calendarKey)).status, 200);
+    key = second.key;
+  });
+
   await check("there is no shared password to guess", async () => {
     const res = await fetch(`${base}/api/login`, {
       method: "POST",

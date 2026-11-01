@@ -89,6 +89,18 @@ export function readDeviceKey(header: string | null): Claims | null {
   return key ? unseal<Claims>("device", key) : null;
 }
 
+/**
+ * The key in a reminders calendar link. Sealed for its own purpose, so the
+ * link a calendar app keeps can only read the reminders and open their links,
+ * never save. It carries the key version too: Reset key revokes it with the rest.
+ */
+export function calendarKey(claims: Claims): string | null {
+  const { i, r, u, k } = claims;
+  return seal("calendar", { i, r, u, ...(k ? { k } : {}) });
+}
+
+export const readCalendarKey = (key: string | null) => (key ? unseal<Claims>("calendar", key) : null);
+
 /** Self-hosted only: the secret typed on the page. */
 export function checkPassword(attempt: string): boolean {
   const key = secret();

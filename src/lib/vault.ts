@@ -85,7 +85,57 @@ export type Vault = {
   notes?: Note[];
   /** Days unused before a link moves to the archive by itself; 0 is never. Absent is the default. */
   archiveAfterDays?: number;
+  /** When to be shown a few links again, delivered as a calendar feed. Absent until the first. */
+  reminders?: Reminder[];
 };
+
+/**
+ * A few links to revisit, on the days and at the time chosen. `days` are
+ * 0 (Sunday) to 6, `time` is `HH:MM` in `tz`, the IANA zone it was set in.
+ * `from` narrows the links: a category (and its folders), `#tag`, or all.
+ */
+export type Reminder = {
+  id: string;
+  days: number[];
+  time: string;
+  tz: string;
+  from?: string;
+  count: number;
+};
+
+export const MAX_REMINDERS = 20;
+export const REMINDER_COUNTS = [1, 3, 5, 10];
+
+/** A reminder from a request or the file, or null if any part of it is not one. */
+export function cleanReminder(raw: unknown): Reminder | null {
+  if (!raw || typeof raw !== "object") return null;
+  const r = raw as Record<string, unknown>;
+  const id = str(r.id, 100);
+  const days = Array.isArray(r.days)
+    ? [...new Set(r.days.filter((d): d is number => Number.isInteger(d) && d >= 0 && d <= 6))].sort(
+        (a, b) => a - b,
+      )
+    : [];
+  const time = typeof r.time === "string" && /^([01]\d|2[0-3]):[0-5]\d$/.test(r.time) ? r.time : null;
+  const tz = str(r.tz, 100);
+  const from = str(r.from, 100)?.trim() ?? "";
+  if (
+    !id ||
+    !/^[\w-]+$/.test(id) ||
+    !days.length ||
+    !time ||
+    !tz ||
+    !REMINDER_COUNTS.includes(r.count as number)
+  ) {
+    return null;
+  }
+  try {
+    new Intl.DateTimeFormat("en-US", { timeZone: tz });
+  } catch {
+    return null;
+  }
+  return { id, days, time, tz, ...(from ? { from } : {}), count: r.count as number };
+}
 
 export const ARCHIVE_AFTER_DAYS = 90;
 const DAY = 86_400_000;
@@ -137,7 +187,10 @@ export type VaultAction =
   | { type: "setArchiveAfter"; days: number }
   /** Inserts at the top, or replaces in place by id. A replaced note keeps its `createdAt`. */
   | { type: "putNote"; note: Note }
-  | { type: "deleteNote"; id: string };
+  | { type: "deleteNote"; id: string }
+  /** Inserts at the end, or replaces in place by id. */
+  | { type: "putReminder"; reminder: Reminder }
+  | { type: "deleteReminder"; id: string };
 
 /** What a client sends to save a note. The server sets the times and cleans the HTML. */
 export type NoteInput = Pick<Note, "id" | "title" | "html" | "pinned" | "category" | "tags" | "color">;
@@ -297,6 +350,13 @@ function refile(note: Note, category: string): Note {
   return next;
 }
 
+function remindFrom(reminder: Reminder, from: string): Reminder {
+  const next = { ...reminder };
+  if (from) next.from = from;
+  else delete next.from;
+  return next;
+}
+
 export function applyAction(vault: Vault, action: VaultAction): Vault {
   switch (action.type) {
     case "put": {
@@ -376,6 +436,9 @@ export function applyAction(vault: Vault, action: VaultAction): Vault {
           ...(vault.notes
             ? { notes: vault.notes.map((n) => (n.category === from ? { ...n, category: to } : n)) }
             : {}),
+          ...(vault.reminders
+            ? { reminders: vault.reminders.map((r) => (r.from === from ? { ...r, from: to } : r)) }
+            : {}),
         },
         parents,
       );
@@ -396,6 +459,10 @@ export function applyAction(vault: Vault, action: VaultAction): Vault {
           marks: vault.marks.map((m) => (m.category === action.name ? { ...m, category: up } : m)),
           ...(vault.notes
             ? { notes: vault.notes.map((n) => (n.category === action.name ? refile(n, up) : n)) }
+            : {}),
+          // A reminder from it follows its links up, or takes from everything at the top.
+          ...(vault.reminders
+            ? { reminders: vault.reminders.map((r) => (r.from === action.name ? remindFrom(r, up) : r)) }
             : {}),
         },
         parents,
@@ -448,6 +515,20 @@ export function applyAction(vault: Vault, action: VaultAction): Vault {
     }
     case "setArchiveAfter":
       return { ...vault, archiveAfterDays: action.days };
+    case "putReminder": {
+      const reminders = vault.reminders ?? [];
+      const { reminder } = action;
+      if (reminders.some((r) => r.id === reminder.id)) {
+        return { ...vault, reminders: reminders.map((r) => (r.id === reminder.id ? reminder : r)) };
+      }
+      return reminders.length < MAX_REMINDERS ? { ...vault, reminders: [...reminders, reminder] } : vault;
+    }
+    case "deleteReminder": {
+      const reminders = (vault.reminders ?? []).filter((r) => r.id !== action.id);
+      const next: Vault = { ...vault, reminders };
+      if (!reminders.length) delete next.reminders;
+      return next;
+    }
   }
 }
 
@@ -604,6 +685,12 @@ export function parseRequest(body: unknown): VaultRequest | null {
       return Number.isInteger(b.days) && (b.days as number) >= 0 && (b.days as number) <= 3650
         ? { type: "setArchiveAfter", days: b.days as number }
         : null;
+    case "putReminder": {
+      const reminder = cleanReminder(b.reminder);
+      return reminder ? { type: "putReminder", reminder } : null;
+    }
+    case "deleteReminder":
+      return id ? { type: "deleteReminder", id } : null;
     case "renameCategory": {
       const from = str(b.from, 100);
       const to = cleanCategory(str(b.to, 100) ?? "");

@@ -59,6 +59,7 @@ export come free from git.
 - **Notes.** Write things down that aren't links: bold, italics, underline, headings, lists, checklists, quotes and links. File them in your categories, tag them, colour them, and pin the ones you need most. They sit beside your links in each category.
 - **Tags.** Add as many as you like to any card, then click one to see everything that has it, across every category.
 - **Archive.** Links you haven't opened in 3 months move to the Archive by themselves, so Everything stays fresh. Archive or restore any link yourself, and choose how long to wait, or never.
+- **Reminders.** Every evening, every Friday, whenever you like: a few links you haven't opened for a while, from everything, one category or one tag. They arrive as events in your own calendar (subscribe once to a private link), so there is no app to install and nothing extra to host.
 - **Undo** on every move and delete. Notes on any card. Rename and merge categories.
 - **Reset your key** from Connect if it ever leaks. Every old key stops working at once.
 - **Light and dark**, following your system.

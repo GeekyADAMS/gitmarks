@@ -1,5 +1,5 @@
 import type { APIRoute } from "astro";
-import { keyFor, keyIsCurrent, owner } from "@/lib/owner";
+import { calendarKeyFor, keyFor, keyIsCurrent, owner } from "@/lib/owner";
 import { loadVault, performRequest } from "@/lib/server";
 import { categoryTree, parseRequest } from "@/lib/vault";
 
@@ -42,7 +42,13 @@ export const POST: APIRoute = async ({ request, cookies }) => {
     // to lock its owner out by resetting it.
     if (parsed.type === "resetKey" && me.viaKey) return notFound();
     const result = await performRequest(me.store, parsed);
-    if (result.ok && parsed.type === "resetKey") return json({ ...result, key: keyFor(me, result.vault) });
+    if (result.ok && parsed.type === "resetKey") {
+      return json({
+        ...result,
+        key: keyFor(me, result.vault),
+        calendarKey: calendarKeyFor(me, result.vault),
+      });
+    }
     return json(result, result.ok ? 200 : 502);
   } catch (error) {
     return fail(error, "Save failed.");
